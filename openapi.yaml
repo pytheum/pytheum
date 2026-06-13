@@ -202,6 +202,44 @@ paths:
         required: true
         schema:
           type: string
+  /v1/markets/{ref}/ohlcv:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: OHLCV candles (venue-live source; interval 1m|5m|15m|1h|1d).
+      tags:
+      - trader
+      parameters:
+      - name: ref
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: interval
+        in: query
+        required: false
+        description: 'Candle interval: 1m|5m|15m|1h|1d (default 1h)'
+        schema:
+          type: string
+      - name: since
+        in: query
+        required: false
+        description: Start of range (ISO-8601 or Unix-seconds)
+        schema:
+          type: string
+      - name: until
+        in: query
+        required: false
+        description: End of range (ISO-8601 or Unix-seconds)
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Max candles (default 200, max 1000)
+        schema:
+          type: string
   /v1/markets/{ref}/holders:
     get:
       responses:

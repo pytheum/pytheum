@@ -131,6 +131,17 @@ def build_stub_registry() -> RouterRegistry:
         tags=["trader"],
     ))
     reg.add(RouteSpec(
+        "GET", "/v1/markets/{ref}/ohlcv", _stub_ref,
+        summary="OHLCV candles (venue-live source; interval 1m|5m|15m|1h|1d).",
+        tags=["trader"],
+        params={
+            "interval": "Candle interval: 1m|5m|15m|1h|1d (default 1h)",
+            "since": "Start of range (ISO-8601 or Unix-seconds)",
+            "until": "End of range (ISO-8601 or Unix-seconds)",
+            "limit": "Max candles (default 200, max 1000)",
+        },
+    ))
+    reg.add(RouteSpec(
         "GET", "/v1/markets/{ref}/holders", _stub_ref,
         summary="Token holder breakdown for a Polymarket market.",
         tags=["trader"],
