@@ -644,3 +644,48 @@ async def test_concurrent_matched_requests_complete_in_parallel():
         f"Requests appear to have run serially: elapsed={elapsed:.3f}s "
         f"(expected <0.090s for parallel 50ms stubs)"
     )
+
+
+@pytest.mark.asyncio
+async def test_handler_ranks_live_pairs_first_over_higher_volume_settled():
+    """Regression (cofounder branch fix/matched-pairs-live-first): settled markets
+    retain lifetime volume, so a pure volume sort surfaces dead pairs on top. A
+    live pair (both legs active) must outrank a higher-volume settled pair, and
+    each pair must carry is_live."""
+    # settled pair with HUGE lifetime volume; live pair with small volume
+    settled_k = {**_KALSHI_ROW, "id": "kalshi:KX-OLD", "status": "settled",
+                 "volume_usd": 5_000_000.0}
+    settled_pm = {**_PM_ROW, "id": "polymarket:90090", "status": "resolved",
+                  "volume_usd": 5_000_000.0}
+    live_k = {**_KALSHI_ROW, "id": "kalshi:KX-LIVE", "status": "active",
+              "volume_usd": 1000.0}
+    live_pm = {**_PM_ROW, "id": "polymarket:90091", "status": "active",
+               "volume_usd": 1000.0}
+    dao = _SimpleDao({
+        "kalshi:KX-OLD": settled_k, "polymarket:90090": settled_pm,
+        "kalshi:KX-LIVE": live_k, "polymarket:90091": live_pm,
+    })
+    settled_pair = {
+        "kalshi_ref": "kalshi:KX-OLD", "kalshi_ticker": "KX-OLD",
+        "pm_ref": "polymarket:90090", "pm_gamma_id": "90090",
+        "pm_slug": "old", "bet_type": "moneyline", "slice": "structured",
+        "method": "structured_key", "confidence": 1.0,
+        "kalshi_title": "old", "pm_title": "old",
+    }
+    live_pair = {
+        "kalshi_ref": "kalshi:KX-LIVE", "kalshi_ticker": "KX-LIVE",
+        "pm_ref": "polymarket:90091", "pm_gamma_id": "90091",
+        "pm_slug": "live", "bet_type": "moneyline", "slice": "structured",
+        "method": "structured_key", "confidence": 1.0,
+        "kalshi_title": "live", "pm_title": "live",
+    }
+    idx = _make_index(pairs=[settled_pair, live_pair])
+    status, body = await handle_markets_matched(
+        {"sort_by": "volume"}, dao=dao, equivalence=idx
+    )
+    assert status == 200
+    assert len(body["pairs"]) == 2
+    # live pair first despite 5000x less volume
+    assert body["pairs"][0]["kalshi"]["id"] == "kalshi:KX-LIVE"
+    assert body["pairs"][0]["is_live"] is True
+    assert body["pairs"][1]["is_live"] is False
