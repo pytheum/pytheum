@@ -1,5 +1,7 @@
 [importlinter]
-root_packages = pytheum
+root_packages =
+    pytheum
+include_external_packages = True
 
 [importlinter:contract:1]
 name = pytheum must not import pytheum_pit
