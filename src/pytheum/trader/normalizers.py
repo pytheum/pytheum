@@ -254,7 +254,7 @@ def normalize_pm_oi(
     # The list is per-token; sum or take first non-null value.
     total: float | None = None
     for item in items:
-        oi = _safe_float(item.get("open_interest_count") or item.get("open_interest"))
+        oi = _safe_float(item.get("open_interest_count") or item.get("open_interest") or item.get("value"))
         if oi is not None:
             total = (total or 0.0) + oi
     return {
@@ -303,15 +303,28 @@ def normalize_pm_holders(
     *,
     ref: str,
 ) -> dict[str, Any]:
-    """Normalize Polymarket /holders response."""
+    """Normalize Polymarket /holders response.
+
+    Venue returns two-level nesting:
+      [{"token": <token_id>, "holders": [{"proxyWallet", "amount", "asset", ...}]}]
+    Each outer entry wraps one token's holder list; inner records carry the real fields.
+    """
     holders: list[dict[str, Any]] = []
-    for item in items:
-        addr_raw = item.get("address") if item.get("address") is not None else item.get("proxyWallet")
-        holders.append({
-            "address": addr_raw,
-            "amount": _safe_float(item.get("amount") or item.get("size")),
-            "outcome": item.get("outcome") or item.get("asset_id"),
-        })
+    for outer in items:
+        # Venue shape: {token: <token_id>, holders: [...per-holder-dicts...]}
+        token_id = outer.get("token")
+        for item in (outer.get("holders") or []):
+            addr_raw = item.get("proxyWallet") or item.get("address")
+            holders.append({
+                "address": addr_raw,
+                "amount": _safe_float(item.get("amount") or item.get("size")),
+                "outcome": (
+                    item.get("outcome")
+                    or item.get("asset")
+                    or item.get("asset_id")
+                    or token_id
+                ),
+            })
     return {
         "holders": holders,
         "count": len(holders),
@@ -418,12 +431,12 @@ def normalize_pm_whale_trades(
 
         result.append({
             "ts": ts_str,
-            "market": item.get("market") or item.get("asset_id"),
+            "market": item.get("market") or item.get("conditionId") or item.get("asset_id") or item.get("asset"),
             "price": round(price, 6),
             "size": round(size, 4),
             "notional_usd": notional_usd,
             "side": side,
-            "wallet": item.get("maker") or item.get("taker") or item.get("trader"),
+            "wallet": item.get("proxyWallet") or item.get("maker") or item.get("taker") or item.get("trader"),
             "pseudonym": item.get("pseudonym") or item.get("name"),
         })
         if len(result) >= limit:
