@@ -245,6 +245,27 @@ def test_normalize_kalshi_oi_extracts_field() -> None:
     assert result["source"] == "live"
 
 
+def test_normalize_kalshi_oi_falls_back_to_fp_when_plain_null() -> None:
+    """Real Kalshi list/detail shape: `open_interest` is null, the value lives
+    in `open_interest_fp` (fixed-point STRING, contracts). Regression for the
+    cofounder follow-up — the plain-field-only read returned null for every
+    Kalshi market. Live-captured payload shape."""
+    real_body = {"market": {
+        "ticker": "KXNBA-26-NYK",
+        "open_interest": None,
+        "open_interest_fp": "27896792.80",
+    }}
+    result = normalize_kalshi_oi(real_body, ref="kalshi:KXNBA-26-NYK")
+    assert result["open_interest"] == 27896792.80  # no scaling — matches core ws_normalizer
+    assert result["venue"] == "kalshi"
+
+
+def test_normalize_kalshi_oi_prefers_plain_field_when_present() -> None:
+    """If a future/other endpoint populates the plain field, use it (fp is fallback)."""
+    body = {"market": {"open_interest": 100, "open_interest_fp": "999.0"}}
+    assert normalize_kalshi_oi(body, ref="kalshi:KX")["open_interest"] == 100.0
+
+
 def test_normalize_pm_oi_sums_tokens() -> None:
     result = normalize_pm_oi(_FAKE_PM_OI, ref="polymarket:slug")
     assert result["open_interest"] == 750.0  # 500 + 250
