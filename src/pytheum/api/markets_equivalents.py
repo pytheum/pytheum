@@ -161,15 +161,26 @@ async def handle_markets_equivalents(
     if not force_refresh and hit is not None and time.monotonic() - hit[0] < _CACHE_TTL_S:
         return 200, hit[1]
 
-    # Source pairs from index (preferred) or DAO fallback
+    # Lazy-load the equivalence singleton when not injected (same pattern as
+    # handle_markets_matched / handle_market_rules / handle_status).  The
+    # singleton is already pre-warmed at boot so this is a fast dict lookup.
+    if equivalence is None:
+        from pytheum.equivalence.index import get_index
+        equivalence = get_index()
+
+    # Source pairs from index (preferred) or DAO fallback.
+    # When dao=None (secretless / no-DB config) the DAO path is skipped; the
+    # index path still provides the full pair set, just without live hydration.
     if equivalence is not None:
         pairs = _index_rows_to_pairs(equivalence._rows, limit=limit,
                                      fungible_only=fungible_only)
-    else:
+    elif dao is not None:
         pairs = await dao.fetch_equivalence_pairs(limit=limit)
+    else:
+        pairs = []
 
     legs: dict[str, dict[str, Any]] = {}
-    if pairs:
+    if pairs and dao is not None:
         ids = sorted({p["kalshi_market_id"] for p in pairs}
                      | {p["polymarket_market_id"] for p in pairs})
         for r in await dao.fetch_markets_by_ids(ids):
