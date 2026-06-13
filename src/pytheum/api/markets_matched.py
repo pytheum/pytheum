@@ -304,6 +304,15 @@ async def handle_markets_matched(
         )
         cv = _cross_venue(k_block, pm_block)
 
+        # live = both legs currently active in the store. Settled markets keep
+        # their lifetime volume_usd, so a pure volume sort ranks dead 2022-24
+        # pairs above live ones; is_live is the primary sort key (below) so the
+        # default surfaces tradeable pairs first. Exposed so callers can filter.
+        is_live = (
+            (k_row or {}).get("status") == "active"
+            and (pm_row or {}).get("status") == "active"
+        )
+
         pairs.append({
             "kalshi": k_block,
             "polymarket": pm_block,
@@ -311,6 +320,7 @@ async def handle_markets_matched(
             "confidence": pair.get("confidence"),
             "method": pair.get("method"),
             "cross_venue": cv,
+            "is_live": is_live,
         })
 
     # When min_volume or fungible_only filtering was applied we over-fetched;
@@ -319,8 +329,11 @@ async def handle_markets_matched(
         total_filtered = len(pairs)
         pairs = pairs[offset: offset + limit]
 
-    # Sort by the requested mode.
-    pairs.sort(key=_build_sort_key(sort_by), reverse=True)
+    # Sort by the requested mode, but ALWAYS rank live pairs (both legs active)
+    # first — settled markets retain lifetime volume and would otherwise
+    # dominate every sort mode with dead pairs.
+    _inner = _build_sort_key(sort_by)
+    pairs.sort(key=lambda p: (p.get("is_live", False), _inner(p)), reverse=True)
 
     # Meta block
     filter_block: dict[str, Any] = {
