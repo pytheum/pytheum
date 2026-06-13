@@ -122,6 +122,17 @@ async def handle_markets_screen(
     *,
     dao: Any,
 ) -> tuple[int, dict[str, Any]]:
+    # Never-500 convention: when booted without a DB (dao=None, secretless config)
+    # return a structured 200 with degraded meta rather than crashing.
+    if dao is None:
+        return 200, {
+            "markets": [],
+            "count": 0,
+            "meta": {
+                "degraded": True,
+                "degraded_reason": "db_unavailable",
+            },
+        }
     limit = parse_limit(query, default=DEFAULT_LIMIT, max_limit=MAX_LIMIT)
     # Accept both `venues` (this endpoint's documented param) and `venue` (the
     # context/relevant-to param) — a trader probe filtered Kalshi with ?venue=
