@@ -75,9 +75,22 @@ _FAKE_ACTIVITY_ITEMS = [
 
 _FAKE_VALUE_ITEMS = [{"value": "12345.67"}]
 
+# Real venue two-level nesting: [{token, holders:[{proxyWallet, amount, asset, ...}]}]
 _FAKE_HOLDERS_ITEMS = [
-    {"address": "0xaaa", "amount": "200.0", "outcome": "YES"},
-    {"address": "0xbbb", "amount": "100.0", "outcome": "NO"},
+    {
+        "token": "98022490xxx",
+        "holders": [
+            {"proxyWallet": "0xaaa", "amount": 200.0, "asset": "98022490xxx",
+             "outcomeIndex": 0, "name": "Alice", "pseudonym": "Willing-Minnow"},
+        ],
+    },
+    {
+        "token": "53831553xxx",
+        "holders": [
+            {"proxyWallet": "0xbbb", "amount": 100.0, "asset": "53831553xxx",
+             "outcomeIndex": 1, "name": "Bob", "pseudonym": "Jolly-Penguin"},
+        ],
+    },
 ]
 
 # Raw trades: notional = price * size
@@ -183,13 +196,17 @@ def test_normalize_pm_leaderboard_monthly() -> None:
 
 
 def test_normalize_pm_holders_structure() -> None:
+    # _FAKE_HOLDERS_ITEMS uses the real two-level venue shape (updated to match bug fix).
     result = normalize_pm_holders(_FAKE_HOLDERS_ITEMS, ref="polymarket:some-slug")
     assert result["venue"] == "polymarket"
     assert result["source"] == "live"
     assert result["ref"] == "polymarket:some-slug"
     assert len(result["holders"]) == 2
-    assert result["holders"][0]["outcome"] == "YES"
-    assert result["holders"][1]["outcome"] == "NO"
+    # address comes from proxyWallet in the inner holder record
+    assert result["holders"][0]["address"] == "0xaaa"
+    assert result["holders"][1]["address"] == "0xbbb"
+    # outcome falls back to asset token_id when no "outcome" string field is present
+    assert result["holders"][0]["outcome"] == "98022490xxx"
     assert isinstance(result["holders"][0]["amount"], float)
 
 
@@ -601,3 +618,129 @@ def test_mcp_existing_trader_tools_still_registered() -> None:
     assert "t_orderbook" in tool_names
     assert "t_recent_trades" in tool_names
     assert "t_open_interest" in tool_names
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Regression tests — real captured venue payload shapes (2026-06-13 diagnosis)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_normalize_pm_holders_real_venue_shape() -> None:
+    """FIX 2 — venue returns two-level [{token, holders:[{proxyWallet, amount, asset}]}].
+
+    Before fix: normalizer iterated outer dicts (keys: token, holders) and tried
+    item.get("proxyWallet") on them → all None, zero real data.
+    After fix: normalizer unwraps outer→inner; address/amount/outcome populate correctly.
+
+    Payload shape captured live:
+      GET https://data-api.polymarket.com/holders?market=0x1fad72...
+    """
+    venue_payload = [
+        {
+            "token": "98022490269692409998126496127597032490334070080325855126491859374983463996227",
+            "holders": [
+                {
+                    "proxyWallet": "0xdf6d3c63bce0d7d10cce5ed3e96b1688c9d8c2cf",
+                    "amount": 4532.3,
+                    "asset": "98022490269692409998126496127597032490334070080325855126491859374983463996227",
+                    "outcomeIndex": 1,
+                    "name": "TheRedChip",
+                    "pseudonym": "Willing-Minnow",
+                },
+                {
+                    "proxyWallet": "0xaabbccddaabbccddaabbccddaabbccddaabbccdd",
+                    "amount": 2100.0,
+                    "asset": "98022490269692409998126496127597032490334070080325855126491859374983463996227",
+                    "outcomeIndex": 1,
+                    "name": "",
+                    "pseudonym": "Silent-Whale",
+                },
+            ],
+        },
+        {
+            "token": "53831553867117376929679638628984757498953867665706768399789765049888178027684",
+            "holders": [
+                {
+                    "proxyWallet": "0x1122334455667788990011223344556677889900",
+                    "amount": 800.0,
+                    "asset": "53831553867117376929679638628984757498953867665706768399789765049888178027684",
+                    "outcomeIndex": 0,
+                    "name": "",
+                    "pseudonym": "Cautious-Crow",
+                },
+            ],
+        },
+    ]
+
+    result = normalize_pm_holders(venue_payload, ref="polymarket:new-rhianna-album-before-gta-vi-926")
+
+    assert result["venue"] == "polymarket"
+    assert result["source"] == "live"
+    assert result["count"] == 3  # 2 + 1 inner holders
+    assert len(result["holders"]) == 3
+
+    h0 = result["holders"][0]
+    assert h0["address"] == "0xdf6d3c63bce0d7d10cce5ed3e96b1688c9d8c2cf"
+    assert h0["amount"] == pytest.approx(4532.3)
+    # outcome falls back to asset token_id (no "outcome" string in real payload)
+    assert h0["outcome"] == "98022490269692409998126496127597032490334070080325855126491859374983463996227"
+
+    h2 = result["holders"][2]
+    assert h2["address"] == "0x1122334455667788990011223344556677889900"
+    assert h2["amount"] == pytest.approx(800.0)
+    assert h2["outcome"] == "53831553867117376929679638628984757498953867665706768399789765049888178027684"
+
+
+def test_normalize_pm_whale_trades_real_venue_shape() -> None:
+    """FIX 4 — venue sends conditionId (market), asset (token), proxyWallet (trader).
+
+    Before fix: market=item.get("market") or item.get("asset_id") → None (neither key exists).
+                wallet=item.get("maker") or item.get("taker") or item.get("trader") → None.
+    After fix:  market reads "conditionId"; wallet reads "proxyWallet".
+
+    Payload shape captured live:
+      GET https://data-api.polymarket.com/trades?market=0x1fad72...&limit=2
+    """
+    venue_payload = [
+        {
+            "proxyWallet": "0x9e031b2be87b9f5582c6988aa5a38455cc666bbe",
+            "side": "SELL",
+            "asset": "98022490269692409998126496127597032490334070080325855126491859374983463996227",
+            "conditionId": "0x1fad72fae204143ff1c3035e99e7c0f65ea8d5cd9bd1070987bd1a3316f772be",
+            "size": 36.88,
+            "price": 0.5,
+            "timestamp": 1781372776,
+            "outcome": "Yes",
+            "name": "",
+            "pseudonym": "",
+        },
+        {
+            "proxyWallet": "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            "side": "BUY",
+            "asset": "98022490269692409998126496127597032490334070080325855126491859374983463996227",
+            "conditionId": "0x1fad72fae204143ff1c3035e99e7c0f65ea8d5cd9bd1070987bd1a3316f772be",
+            "size": 500.0,
+            "price": 0.82,
+            "timestamp": 1781373000,
+            "outcome": "Yes",
+            "name": "WhaleAcc",
+            "pseudonym": "Fast-Falcon",
+        },
+    ]
+
+    result = normalize_pm_whale_trades(venue_payload, min_usd=1.0, limit=10, ref=None)
+
+    # Both trades pass min_usd=1.0 threshold
+    assert len(result) == 2
+
+    t0 = result[0]
+    # FIX 4a: market must now read conditionId
+    assert t0["market"] == "0x1fad72fae204143ff1c3035e99e7c0f65ea8d5cd9bd1070987bd1a3316f772be"
+    # FIX 4b: wallet must now read proxyWallet
+    assert t0["wallet"] == "0x9e031b2be87b9f5582c6988aa5a38455cc666bbe"
+    assert t0["side"] == "SELL"
+    assert t0["notional_usd"] == pytest.approx(0.5 * 36.88, rel=1e-4)
+
+    t1 = result[1]
+    assert t1["market"] == "0x1fad72fae204143ff1c3035e99e7c0f65ea8d5cd9bd1070987bd1a3316f772be"
+    assert t1["wallet"] == "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    assert t1["side"] == "BUY"

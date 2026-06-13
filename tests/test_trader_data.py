@@ -657,6 +657,92 @@ async def test_resolve_pm_by_condition_id() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Regression tests — real captured venue payload shapes (2026-06-13 diagnosis)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_normalize_pm_oi_real_venue_shape() -> None:
+    """FIX 1 — venue returns {"market": ..., "value": 21870.138673}; key is "value".
+
+    Before fix: normalizer checked open_interest_count / open_interest → None for every item.
+    After fix:  falls through to item.get("value") → float populated correctly.
+
+    Payload captured live:
+      GET https://data-api.polymarket.com/oi?market=0x1fad72...
+    """
+    venue_payload = [
+        {
+            "market": "0x1fad72fae204143ff1c3035e99e7c0f65ea8d5cd9bd1070987bd1a3316f772be",
+            "value": 21870.138673,
+        }
+    ]
+    result = normalize_pm_oi(venue_payload, ref="polymarket:new-rhianna-album-before-gta-vi-926")
+
+    assert result["venue"] == "polymarket"
+    assert result["source"] == "live"
+    # Must NOT be None — this was the broken state before the fix
+    assert result["open_interest"] is not None
+    assert result["open_interest"] == pytest.approx(21870.138673)
+
+
+def test_extract_resolved_clob_ids_json_string() -> None:
+    """FIX 3 — Gamma returns clobTokenIds as a JSON-encoded STRING, not a Python list.
+
+    Before fix: _extract_resolved treated the string as a list; clob_ids[0] → '[' (first char).
+    After fix:  json.loads() decodes the string first; token_id is the correct integer string.
+
+    Type confirmed live: type(m["clobTokenIds"]) → <class 'str'>
+    Market: new-rhianna-album-before-gta-vi-926 (Gamma id 540817)
+    """
+    from pytheum.trader.resolve import _extract_resolved
+
+    # Exact Gamma response shape for market 540817
+    gamma_market_dict = {
+        "id": "540817",
+        "conditionId": "0x1fad72fae204143ff1c3035e99e7c0f65ea8d5cd9bd1070987bd1a3316f772be",
+        # Gamma encodes this field as a JSON string, not a native list
+        "clobTokenIds": (
+            '["98022490269692409998126496127597032490334070080325855126491859374983463996227",'
+            '"53831553867117376929679638628984757498953867665706768399789765049888178027684"]'
+        ),
+    }
+
+    resolved = _extract_resolved(gamma_market_dict)
+
+    # token_id must be the YES token integer string, NOT '[' (the first char of the JSON string)
+    assert resolved.token_id == (
+        "98022490269692409998126496127597032490334070080325855126491859374983463996227"
+    ), f"Got wrong token_id: {resolved.token_id!r} — likely still reading the raw string"
+    assert resolved.condition_id == (
+        "0x1fad72fae204143ff1c3035e99e7c0f65ea8d5cd9bd1070987bd1a3316f772be"
+    )
+
+
+def test_extract_resolved_clob_ids_malformed_string_raises() -> None:
+    """_extract_resolved must raise ValueError (not crash) on unparseable clobTokenIds."""
+    from pytheum.trader.resolve import _extract_resolved
+
+    with pytest.raises(ValueError, match="clobTokenIds"):
+        _extract_resolved({
+            "id": "99999",
+            "conditionId": "0xabc",
+            "clobTokenIds": "not-valid-json",
+        })
+
+
+def test_extract_resolved_clob_ids_native_list_still_works() -> None:
+    """Regression guard: a native Python list (not a string) must still resolve correctly."""
+    from pytheum.trader.resolve import _extract_resolved
+
+    resolved = _extract_resolved({
+        "id": "123",
+        "conditionId": "0xdeadbeef",
+        "clobTokenIds": ["tokenA", "tokenB"],
+    })
+    assert resolved.token_id == "tokenA"
+    assert resolved.condition_id == "0xdeadbeef"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MCP tool registration
 # ─────────────────────────────────────────────────────────────────────────────
 

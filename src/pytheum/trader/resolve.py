@@ -23,6 +23,7 @@ Chosen path (documented here per the task requirement):
 """
 from __future__ import annotations
 
+import json as _json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -52,8 +53,20 @@ def _is_numeric_gamma_id(s: str) -> bool:
 
 
 def _extract_resolved(market: dict[str, Any]) -> PmResolved:
-    """Extract token_id + condition_id from a Gamma market dict."""
-    clob_ids: list[str] | None = market.get("clobTokenIds")
+    """Extract token_id + condition_id from a Gamma market dict.
+
+    Gamma returns ``clobTokenIds`` as a JSON-encoded string (confirmed live):
+      m["clobTokenIds"]  →  '["98022490...","53831553..."]'  (type str)
+    We decode it before indexing.  ``conditionId`` IS a plain Python string —
+    no analogous fix needed there.
+    """
+    clob_ids: Any = market.get("clobTokenIds")
+    # Gamma quirk: clobTokenIds is a JSON-encoded string, not a native list.
+    if isinstance(clob_ids, str):
+        try:
+            clob_ids = _json.loads(clob_ids)
+        except (ValueError, _json.JSONDecodeError):
+            clob_ids = None
     if not clob_ids:
         raise ValueError(
             f"Gamma market has no clobTokenIds — cannot resolve to CLOB token_id. "
