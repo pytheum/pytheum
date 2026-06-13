@@ -168,8 +168,14 @@ def normalize_kalshi_oi(
 ) -> dict[str, Any]:
     """Normalize the market body from ``GET /markets/{ticker}`` for OI."""
     market = body.get("market") or body
-    oi_raw = market.get("open_interest")
-    oi = _safe_float(oi_raw)
+    # Kalshi's list + detail endpoints null the plain `open_interest` field and
+    # carry the real value in `open_interest_fp` (a fixed-point STRING, in
+    # contracts — matches pytheum-core's ws_normalizer, which does
+    # Decimal(open_interest_fp) with no scaling). Fall back to it when the plain
+    # field is null. (cofounder follow-up docs/kalshi-oi-still-null-2026-06-13.)
+    oi = _safe_float(market.get("open_interest"))
+    if oi is None:
+        oi = _safe_float(market.get("open_interest_fp"))
     return {
         "open_interest": oi,
         "venue": "kalshi",
