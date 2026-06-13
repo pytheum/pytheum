@@ -415,3 +415,72 @@ def resolution_source(text: str | None) -> str | None:
         if any(k in low for k in keys):
             return label
     return None
+
+
+def build_outcome_ladder(
+    rows: list[dict[str, Any]],
+    *,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Assemble the per-outcome price ladder for a multi-outcome / event market
+    from its child rows. Each event-parent (e.g. "World Cup Winner", "Next French
+    Presidential Election") shows implied_yes=None because the price lives on
+    per-outcome children — this turns those children into a ranked ladder
+    [{outcome, market_id, implied_yes, book, volume_usd}] so a trader sees
+    Spain 17% / France 12% / ... in the one call instead of a null.
+    Sorted by implied_yes desc; rows without a price are dropped (untradeable /
+    not-yet-refreshed); deduped by outcome label.
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for r in rows:
+        iy = implied_yes_from_payload(r.get("payload"))
+        if iy is None:
+            continue
+        pay = r.get("payload")
+        if isinstance(pay, str):
+            try:
+                pay = json.loads(pay)
+            except (json.JSONDecodeError, ValueError):
+                pay = {}
+        label = (pay.get("group_item_title") if isinstance(pay, dict) else None)
+        label = (label or r.get("question") or "").strip()
+        key = label.lower()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        out.append({
+            "outcome": label or None,
+            "market_id": r.get("id"),
+            "implied_yes": iy,
+            "book": book_from_payload(r.get("payload")),
+            "volume_usd": r.get("volume_usd"),
+            "condition_id": condition_id_from_payload(r.get("payload")),
+            "flow_flag": flow_flag_from_row(r),
+        })
+    out.sort(key=lambda o: o["implied_yes"] or 0.0, reverse=True)
+    return out[:limit]
+
+
+_FLOW_FLAG_STALE_S = 3 * 3600
+
+
+def flow_flag_from_row(row: dict[str, Any]) -> str | None:
+    """The null-by-default flow breadcrumb. Reads the LEFT-JOINed
+    market_flow_signal.flow_flag column; null when no row / below threshold / the
+    stored signal is stale (>_FLOW_FLAG_STALE_S — sidecar parked, #223)."""
+    raw = row.get("flow_flag")
+    if not raw:
+        return None
+    flag = str(raw)
+    ts = row.get("flow_flag_updated_at")
+    if ts is not None:
+        try:
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            if (datetime.now(UTC) - ts).total_seconds() > _FLOW_FLAG_STALE_S:
+                return None  # stale precomputed flag — don't assert positioning
+        except (AttributeError, TypeError):
+            pass  # unparseable timestamp → fall through and serve the flag
+    return flag

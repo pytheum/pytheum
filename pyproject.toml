@@ -12,6 +12,7 @@ authors = [{ name = "Pytheum", email = "kwnstantinosanagn@gmail.com" }]
 requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.27",
+    "mcp>=1.0",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "uvicorn[standard]>=0.30",
@@ -46,10 +47,23 @@ python_version = "3.11"
 mypy_path = "src"
 packages = ["pytheum"]
 
+[[tool.mypy.overrides]]
+# pytheum_core is an optional runtime dep (not installed in this public repo).
+# All imports from it are inside TYPE_CHECKING guards or deferred function bodies.
+module = "pytheum_core.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# MCP server + tools: HTTP-client code with intentionally broad Any usage.
+# Strict annotations would require full stubs for the MCP SDK + all venue APIs;
+# we suppress the whole module rather than adding 50+ ignores across thin wrappers.
+module = ["pytheum.mcp.server", "pytheum.mcp.tools"]
+ignore_errors = true
+
 [tool.ruff]
 src = ["src"]
 line-length = 99
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-ignore = ["SIM105"]  # contextlib.suppress — handled per-file where needed
+ignore = ["E501", "SIM105"]  # E501: MCP tool docstrings are intentionally long; SIM105: contextlib.suppress
