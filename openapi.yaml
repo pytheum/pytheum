@@ -1,0 +1,247 @@
+openapi: 3.1.0
+info:
+  title: Pytheum API
+  version: 0.0.1
+  description: The verified prediction-market graph — 136k+ settlement-verified cross-venue
+    pairs (Kalshi<->Polymarket), live orderbook quotes, news/social context, and trader
+    analytics.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  contact:
+    url: https://pytheum.com
+servers:
+- url: https://api.pytheum.com
+  description: Production
+paths:
+  /v1/status:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: Service health check and dataset summary — keyless.
+      tags:
+      - meta
+  /v1/markets/screen:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: 'Structured market screen: filter by venue, status, volume, liquidity.'
+      tags:
+      - markets
+      parameters:
+      - name: venue
+        in: query
+        required: false
+        description: 'Filter by venue: kalshi | polymarket'
+        schema:
+          type: string
+      - name: status
+        in: query
+        required: false
+        description: 'Filter by resolution status: open | resolved'
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Maximum number of results (default 50)
+        schema:
+          type: string
+  /v1/markets/equivalents:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: Collection of verified Kalshi<->Polymarket pairs with live quotes.
+      tags:
+      - equivalence
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        description: Maximum number of pairs (default 50)
+        schema:
+          type: string
+      - name: offset
+        in: query
+        required: false
+        description: Pagination offset
+        schema:
+          type: string
+  /v1/markets/matched:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: Paginated view of all 136k+ settlement-verified cross-venue pairs.
+      tags:
+      - equivalence
+      parameters:
+      - name: league
+        in: query
+        required: false
+        description: Filter by league / domain
+        schema:
+          type: string
+      - name: date
+        in: query
+        required: false
+        description: Filter by event date (YYYY-MM-DD)
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Maximum number of results (default 50)
+        schema:
+          type: string
+      - name: offset
+        in: query
+        required: false
+        description: Pagination offset
+        schema:
+          type: string
+  /v1/markets/whale-trades:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: Recent large-notional Polymarket trades above a USD threshold.
+      tags:
+      - trader
+      parameters:
+      - name: min_usd
+        in: query
+        required: false
+        description: Minimum notional in USD (default 5000)
+        schema:
+          type: string
+  /v1/markets/{ref}/equivalents:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: Settlement-verified counterpart market on the other venue.
+      tags:
+      - equivalence
+      parameters:
+      - name: ref
+        in: path
+        required: true
+        schema:
+          type: string
+  /v1/markets/{ref}/rules:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: Full resolution rules for a market and its cross-venue equivalent.
+      tags:
+      - equivalence
+      parameters:
+      - name: ref
+        in: path
+        required: true
+        schema:
+          type: string
+  /v1/markets/{ref}/related:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: Correlated (non-equivalent) cross-venue markets with basis notes.
+      tags:
+      - related
+      parameters:
+      - name: ref
+        in: path
+        required: true
+        schema:
+          type: string
+  /v1/markets/{ref}/book:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: Live orderbook snapshot with top-of-book summary.
+      tags:
+      - trader
+      parameters:
+      - name: ref
+        in: path
+        required: true
+        schema:
+          type: string
+  /v1/markets/{ref}/trades:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: Recent trade tape for a market (live venue fetch, cached ~10 s).
+      tags:
+      - trader
+      parameters:
+      - name: ref
+        in: path
+        required: true
+        schema:
+          type: string
+  /v1/markets/{ref}/oi:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: Current open interest (live venue fetch, cached ~30 s).
+      tags:
+      - trader
+      parameters:
+      - name: ref
+        in: path
+        required: true
+        schema:
+          type: string
+  /v1/markets/{ref}/holders:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: Token holder breakdown for a Polymarket market.
+      tags:
+      - trader
+      parameters:
+      - name: ref
+        in: path
+        required: true
+        schema:
+          type: string
+  /v1/traders/leaderboard:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: Polymarket trader leaderboard ranked by profit.
+      tags:
+      - trader
+      parameters:
+      - name: period
+        in: query
+        required: false
+        description: 'Ranking period: weekly | monthly (default weekly)'
+        schema:
+          type: string
+  /v1/traders/{wallet}:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: 'Polymarket trader profile: positions, recent activity, portfolio value.'
+      tags:
+      - trader
+      parameters:
+      - name: wallet
+        in: path
+        required: true
+        schema:
+          type: string

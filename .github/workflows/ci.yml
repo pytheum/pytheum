@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Install dev deps
+        run: uv sync --extra dev
+      - name: ruff check
+        run: uv run ruff check src/ tests/ scripts/
+
+  typecheck:
+    name: Type check (mypy --strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Install dev deps
+        run: uv sync --extra dev
+      - name: mypy --strict
+        run: uv run mypy --strict src/pytheum/
+
+  import-linter:
+    name: Import contract (pytheum must not import pytheum_pit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Install dev deps
+        run: uv sync --extra dev
+      - name: lint-imports
+        run: uv run lint-imports
+
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Install dev deps
+        run: uv sync --extra dev --python ${{ matrix.python-version }}
+      - name: pytest with coverage
+        run: |
+          uv run pytest tests/ \
+            --cov=src/pytheum \
+            --cov-report=term-missing \
+            --cov-fail-under=80 \
+            -q
+
+  openapi-check:
+    name: OpenAPI spec drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Install dev deps
+        run: uv sync --extra dev
+      - name: Check openapi.yaml is up to date
+        run: uv run python scripts/gen_openapi.py --check
+
+  checksum-verify:
+    name: Dataset checksum verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true  # pull LFS objects so hashes can be verified
+      - name: Verify checksums
+        run: python scripts/verify_checksums.py datasets/
+
+  # ---------------------------------------------------------------------------
+  # Publish (stubbed — TODO: wire PyPI creds when ready for v0.1.0 release)
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish to PyPI
+    needs: [lint, typecheck, import-linter, test, openapi-check, checksum-verify]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: pypi
+    permissions:
+      id-token: write  # for trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Build distribution
+        run: uv build
+      # TODO: uncomment once PyPI trusted-publishing is configured for this repo
+      # - name: Publish to PyPI
+      #   uses: pypa/gh-action-pypi-publish@release/v1
