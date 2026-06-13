@@ -1,0 +1,458 @@
+"""Cross-venue equivalents API handlers.
+
+Two endpoints:
+
+GET /v1/markets/equivalents
+    Collection-level: returns the full live-filtered equivalence set joined to
+    live quotes. t_find_divergences consumes this for the verified-pair
+    divergence scan (#247). Pairs are pre-decided by the cross-venue matcher
+    (136,877 pairs in the 2026-06-12 export); we don't match here.
+
+GET /v1/markets/{ref}/equivalents
+    Per-ref: given a market ref on either venue, return its settlement-verified
+    counterpart(s) from the equivalence dataset, with live price data hydrated
+    from the market store where available.
+"""
+from __future__ import annotations
+
+import asyncio
+import time
+from typing import Any
+
+from pytheum.api.annotators import attach_quote_staleness
+from pytheum.api.params import (
+    book_from_payload,
+    implied_yes_from_payload,
+    parse_limit,
+    resolution_from_payload,
+    resolution_horizon,
+)
+from pytheum.api.ref_utils import normalize_ref
+from pytheum.equivalence.index import is_fungible_method
+
+# ---------------------------------------------------------------------------
+# Collection endpoint constants + cache
+# ---------------------------------------------------------------------------
+
+DEFAULT_LIMIT = 50
+MAX_LIMIT = 200
+
+# The pairs join (136k equivalence rows x markets) plus the 300-id staleness
+# window run ~20s on the shared-compute DB — past the MCP transport's patience
+# (the 2026-06-11 benchmark saw every t_find_divergences call die "Server
+# disconnected" once 6 concurrent agents kept the cache cold).  Everything
+# read here is a slow-moving snapshot, so the server WARMS the cache itself
+# (warm_equivalents_loop, every _WARM_INTERVAL_S) and callers always hit it;
+# the TTL only matters if the warmer dies.
+_CACHE_TTL_S = 180.0
+_WARM_INTERVAL_S = 60.0
+_WARM_KEYS = ("150", "50")  # t_find_divergences fetch + endpoint default
+_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+# ---------------------------------------------------------------------------
+# Collection endpoint helpers
+# ---------------------------------------------------------------------------
+
+def _leg(r: dict[str, Any], *, include_rules: bool = False) -> dict[str, Any]:
+    """Same lean shape as a /screen row — enough for fee-netting + edge math
+    + staleness gating without a follow-up call.
+
+    When ``include_rules=True`` the ``resolution`` field is added (full
+    settlement rules text from the market's payload, truncated to
+    ``_MAX_RESOLUTION_CHARS`` by ``resolution_from_payload``).  Omitted by
+    default to keep the collection-endpoint payload size small; the MCP
+    divergence scanner opts in via ``include_rules=true``.
+    """
+    days_to_resolution, is_stale = resolution_horizon(r.get("resolution_at"))
+    leg: dict[str, Any] = {
+        "id": r["id"],
+        "question": r.get("question"),
+        "venue": r.get("venue"),
+        "status": r.get("status"),
+        "volume_usd": r.get("volume_usd"),
+        "liquidity_usd": r.get("liquidity_usd"),
+        "url": r.get("url"),
+        "resolution_at": (r["resolution_at"].isoformat()
+                          if hasattr(r.get("resolution_at"), "isoformat")
+                          else r.get("resolution_at")),
+        "days_to_resolution": days_to_resolution,
+        "is_stale": is_stale,
+        "implied_yes": implied_yes_from_payload(r.get("payload")),
+        "book": book_from_payload(r.get("payload")),
+    }
+    if include_rules:
+        leg["resolution"] = resolution_from_payload(r.get("payload"))
+    return leg
+
+
+def _index_rows_to_pairs(
+    rows: list[dict[str, Any]], *, limit: int, fungible_only: bool = False,
+) -> list[dict[str, Any]]:
+    """Translate EquivalenceIndex export rows to the DB pair format used by
+    the collection handler.  poly_side / poly_outcome are null because the
+    side-map is not included in the file export.
+
+    When ``fungible_only=True`` rows whose ``method`` is not deterministic /
+    human-adjudicated (see ``is_fungible_method``) are skipped.
+    """
+    pairs: list[dict[str, Any]] = []
+    for row in rows:
+        if fungible_only and not is_fungible_method(row.get("method")):
+            continue
+        k_ref = row.get("kalshi_ref")
+        p_ref = row.get("pm_ref")
+        if not k_ref or not p_ref:
+            continue
+        pairs.append({
+            "kalshi_market_id": k_ref,
+            "polymarket_market_id": p_ref,
+            "method": row.get("method"),
+            "confidence": row.get("confidence"),
+            "bet_type": row.get("bet_type"),
+            "poly_side": None,
+            "poly_outcome": None,
+        })
+        if len(pairs) >= limit:
+            break
+    return pairs
+
+
+def _parse_bool_param(query: dict[str, str], key: str, *, default: bool) -> bool:
+    """Parse a boolean query param; accepts 'true'/'1'/'yes' as truthy."""
+    raw = (query.get(key) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("true", "1", "yes")
+
+
+async def handle_markets_equivalents(
+    query: dict[str, str],
+    *,
+    dao: Any,
+    equivalence: Any = None,
+    force_refresh: bool = False,
+) -> tuple[int, dict[str, Any]]:
+    """GET /v1/markets/equivalents — collection of verified cross-venue pairs.
+
+    ``equivalence`` accepts an EquivalenceIndex (136,877 pairs, loaded from
+    the matcher export file).  When provided, pairs are sourced from the index
+    (faster, avoids a DB join).  When omitted the handler falls back to
+    ``dao.fetch_equivalence_pairs()`` — the original DB-backed path still used
+    by tests and any caller that doesn't have the index mounted.
+
+    Query parameters
+    ----------------
+    fungible_only : bool (default False)
+        When true, restrict to pairs whose method indicates deterministic
+        structural or human-adjudicated equivalence (see ``is_fungible_method``).
+        LLM-judged pairs (opus_backstop, llm_local) are excluded.
+    include_rules : bool (default False)
+        When true, each leg carries a ``resolution`` field (full settlement
+        rules text from the market's payload).  Omitted by default to keep
+        collection-endpoint payload size small; the MCP divergence scanner
+        opts in to pull rules for each pair.
+    """
+    limit = parse_limit(query, default=DEFAULT_LIMIT, max_limit=MAX_LIMIT)
+    fungible_only = _parse_bool_param(query, "fungible_only", default=False)
+    include_rules = _parse_bool_param(query, "include_rules", default=False)
+    cache_key = f"{limit}:{fungible_only}:{include_rules}"
+    hit = _cache.get(cache_key)
+    if not force_refresh and hit is not None and time.monotonic() - hit[0] < _CACHE_TTL_S:
+        return 200, hit[1]
+
+    # Source pairs from index (preferred) or DAO fallback
+    if equivalence is not None:
+        pairs = _index_rows_to_pairs(equivalence._rows, limit=limit,
+                                     fungible_only=fungible_only)
+    else:
+        pairs = await dao.fetch_equivalence_pairs(limit=limit)
+
+    legs: dict[str, dict[str, Any]] = {}
+    if pairs:
+        ids = sorted({p["kalshi_market_id"] for p in pairs}
+                     | {p["polymarket_market_id"] for p in pairs})
+        for r in await dao.fetch_markets_by_ids(ids):
+            legs[r["id"]] = _leg(r, include_rules=include_rules)
+        # Staleness inline so a parked-wall leg never reads as a live edge.
+        await attach_quote_staleness(list(legs.values()), dao=dao)
+
+    out = []
+    dropped_stale = 0
+    for p in pairs:
+        a = legs.get(p["kalshi_market_id"])
+        b = legs.get(p["polymarket_market_id"])
+        if a is None or b is None:
+            continue
+        # Resolution already passed on either leg => the pair is settled, not
+        # tradeable — venues carry resolved game markets as status=active
+        # (#213), and those ghosts (one side parked at 0.999/0.0005) would
+        # otherwise dominate any edge ranking.
+        if a.get("is_stale") or b.get("is_stale"):
+            dropped_stale += 1
+            continue
+        out.append({
+            "method": p.get("method"),
+            "confidence": p.get("confidence"),
+            "bet_type": p.get("bet_type"),
+            # Which poly outcome index the Kalshi YES side maps to (side-mapper);
+            # null = unmapped, the scanner won't edge-score the pair.
+            "poly_side": p.get("poly_side"),
+            "poly_outcome": p.get("poly_outcome"),
+            "a": a,
+            "b": b,
+        })
+    body = {
+        "pairs": out,
+        "count": len(out),
+        "meta": {
+            "limit": limit,
+            "dropped_stale": dropped_stale,
+            "fungible_only": fungible_only,
+            "include_rules": include_rules,
+            "cache_ttl_s": _CACHE_TTL_S,
+            "source": "pytheum-cross-venue-matcher gold set (pre-decided pairs)",
+        },
+    }
+    _cache[cache_key] = (time.monotonic(), body)
+    return 200, body
+
+
+async def warm_equivalents_loop(*, dao: Any, stop: Any) -> None:
+    """Keep the equivalents cache permanently warm so no caller ever pays the
+    ~20s cold path (which exceeds the MCP transport's patience under load).
+    Runs in the server process; failures log and retry next cycle."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+    while not stop.is_set():
+        for key in _WARM_KEYS:
+            try:
+                await handle_markets_equivalents({"limit": key}, dao=dao,
+                                                 force_refresh=True)
+            except Exception:
+                logger.exception("equivalents cache warm failed (limit=%s)", key)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=_WARM_INTERVAL_S)
+        except TimeoutError:
+            continue
+
+
+# ---------------------------------------------------------------------------
+# Per-ref endpoint helpers
+# ---------------------------------------------------------------------------
+
+# Venue names that each matched_via key belongs to
+_MATCHED_VIA_VENUE: dict[str, str] = {
+    "kalshi_ticker": "kalshi",
+    "pm_gamma_id": "polymarket",
+    "pm_condition_id": "polymarket",
+    "pm_slug": "polymarket",
+}
+
+
+def _row_to_market_block(row: dict[str, Any], ref: str) -> dict[str, Any]:
+    """Build a hydrated market block from a DAO row."""
+    payload = row.get("payload")
+    days, is_stale = resolution_horizon(row.get("resolution_at"))
+    return {
+        "id": row.get("id", ref),
+        "question": row.get("question"),
+        "venue": row.get("venue"),
+        "status": row.get("status"),
+        "volume_usd": row.get("volume_usd"),
+        "liquidity_usd": row.get("liquidity_usd"),
+        "url": row.get("url"),
+        "resolution_at": (
+            row["resolution_at"].isoformat()
+            if hasattr(row.get("resolution_at"), "isoformat")
+            else row.get("resolution_at")
+        ),
+        "days_to_resolution": days,
+        "is_stale": is_stale,
+        "implied_yes": implied_yes_from_payload(payload),
+        "book": book_from_payload(payload),
+    }
+
+
+def _minimal_market_block(ref: str, *, question: str | None, venue: str | None) -> dict[str, Any]:
+    """Minimal market block when the market isn't in the platform store."""
+    return {"id": ref, "question": question, "venue": venue}
+
+
+def _build_equivalent_item(
+    pair: dict[str, Any],
+    *,
+    counterpart_ref: str,
+    counterpart_venue: str,
+    counterpart_row: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build one item in the equivalents list."""
+    export_question = (
+        pair.get("kalshi_title") if counterpart_venue == "kalshi" else pair.get("pm_title")
+    )
+    if counterpart_row is None:
+        return {
+            "id": counterpart_ref,
+            "venue": counterpart_venue,
+            "question": export_question,
+            "bet_type": pair.get("bet_type"),
+            "confidence": pair.get("confidence"),
+            "method": pair.get("method"),
+            "implied_yes": None,
+            "book": None,
+            "volume_usd": None,
+            "url": None,
+        }
+    payload = counterpart_row.get("payload")
+    return {
+        "id": counterpart_ref,
+        "venue": counterpart_venue,
+        "question": counterpart_row.get("question") or export_question,
+        "bet_type": pair.get("bet_type"),
+        "confidence": pair.get("confidence"),
+        "method": pair.get("method"),
+        "implied_yes": implied_yes_from_payload(payload),
+        "book": book_from_payload(payload),
+        "volume_usd": counterpart_row.get("volume_usd"),
+        "url": counterpart_row.get("url"),
+    }
+
+
+async def _hydrate(ref: str, dao: Any) -> dict[str, Any] | None:
+    """Try dao.fetch_market; return None on any failure."""
+    try:
+        return await dao.fetch_market(ref)  # type: ignore[no-any-return]
+    except Exception:
+        return None
+
+
+async def handle_market_equivalents(
+    ref: str,
+    query: dict[str, str],
+    *,
+    dao: Any,
+    equivalence: Any = None,
+) -> tuple[int, dict[str, Any]]:
+    """GET /v1/markets/{ref}/equivalents handler.
+
+    ``equivalence`` accepts an EquivalenceIndex (or duck-typed equivalent with
+    .lookup() / .pairs_loaded / .dataset_version / .file_missing / .load_error).
+    Defaults to the module-level singleton (lazy-loaded on first call).
+    """
+    if equivalence is None:
+        from pytheum.equivalence.index import get_index
+        equivalence = get_index()
+
+    # Normalise ref: URL extraction + venue-prefix case-fold.
+    ref_norm = normalize_ref(ref)
+
+    # Resolve equivalence pairs
+    pairs, matched_via = equivalence.lookup(ref_norm)
+
+    # Determine focal venue from matched_via (most reliable) or the ref prefix
+    focal_venue: str | None = _MATCHED_VIA_VENUE.get(matched_via)
+    if focal_venue is None and ":" in ref_norm:
+        prefix = ref_norm.split(":", 1)[0].lower()
+        if prefix in ("kalshi", "polymarket"):
+            focal_venue = prefix
+
+    # Hydrate focal market from store
+    focal_row = await _hydrate(ref_norm, dao)
+
+    # If lookup was via condition_id or slug, try the canonical numeric pm_ref as fallback
+    if focal_row is None and pairs and matched_via in ("pm_condition_id", "pm_slug"):
+        canonical = pairs[0].get("pm_ref")
+        if canonical and canonical != ref_norm:
+            focal_row = await _hydrate(canonical, dao)
+
+    # If raw (no-prefix) kalshi ticker, try with prefix
+    if focal_row is None and pairs and matched_via == "kalshi_ticker" and ":" not in ref_norm:
+        focal_row = await _hydrate(f"kalshi:{ref_norm}", dao)
+
+    # Focal market block
+    focal_question: str | None = None
+    if pairs:
+        focal_question = (
+            pairs[0].get("kalshi_title") if focal_venue == "kalshi"
+            else pairs[0].get("pm_title")
+        )
+
+    market_block = (
+        _row_to_market_block(focal_row, ref_norm)
+        if focal_row is not None
+        else _minimal_market_block(ref_norm, question=focal_question, venue=focal_venue)
+    )
+
+    # Determine counterpart venue
+    if focal_venue == "kalshi":
+        counterpart_venue = "polymarket"
+        counterpart_ref_key = "pm_ref"
+    elif focal_venue == "polymarket":
+        counterpart_venue = "kalshi"
+        counterpart_ref_key = "kalshi_ref"
+    else:
+        counterpart_venue = ""
+        counterpart_ref_key = ""
+
+    # Build equivalents list
+    equivalents: list[dict[str, Any]] = []
+    for pair in pairs:
+        counterpart_ref = pair.get(counterpart_ref_key, "") if counterpart_ref_key else ""
+        if not counterpart_ref:
+            continue
+        counterpart_row = await _hydrate(counterpart_ref, dao)
+        equivalents.append(
+            _build_equivalent_item(
+                pair,
+                counterpart_ref=counterpart_ref,
+                counterpart_venue=counterpart_venue,
+                counterpart_row=counterpart_row,
+            )
+        )
+
+    # Cross-venue spread block
+    cross_venue: dict[str, Any] = {}
+    focal_implied = market_block.get("implied_yes") if focal_row is not None else None
+    kalshi_implied: float | None = None
+    pm_implied: float | None = None
+
+    if focal_venue == "kalshi":
+        kalshi_implied = focal_implied
+        for eq in equivalents:
+            if eq.get("venue") == "polymarket" and eq.get("implied_yes") is not None:
+                pm_implied = eq["implied_yes"]
+                break
+    elif focal_venue == "polymarket":
+        pm_implied = focal_implied
+        for eq in equivalents:
+            if eq.get("venue") == "kalshi" and eq.get("implied_yes") is not None:
+                kalshi_implied = eq["implied_yes"]
+                break
+
+    if kalshi_implied is not None:
+        cross_venue["kalshi_implied"] = kalshi_implied
+    if pm_implied is not None:
+        cross_venue["pm_implied"] = pm_implied
+    if kalshi_implied is not None and pm_implied is not None:
+        cross_venue["spread"] = round(kalshi_implied - pm_implied, 4)
+
+    # Meta block
+    meta: dict[str, Any] = {
+        "pairs_loaded": equivalence.pairs_loaded,
+        "dataset_version": equivalence.dataset_version,
+        "matched_via": matched_via,
+    }
+    if getattr(equivalence, "file_missing", False):
+        meta["degraded"] = True
+        meta["degraded_reason"] = "equivalence_file_not_found"
+    elif getattr(equivalence, "load_error", None):
+        meta["degraded"] = True
+        meta["degraded_reason"] = equivalence.load_error
+
+    return 200, {
+        "market": market_block,
+        "equivalents": equivalents,
+        "cross_venue": cross_venue,
+        "meta": meta,
+    }
