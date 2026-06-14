@@ -1,7 +1,7 @@
 # pytheum
 
 **The verified prediction-market graph — 136,877 settlement-verified
-Kalshi×Polymarket pairs; 1.6M verified connections across 142k markets.**
+Kalshi×Polymarket pairs; 1.6M verified connections across 364k markets.**
 
 Every pair is verified by **settlement semantics** — the two markets resolve to
 the same real-world outcome — not by fuzzy title similarity. The matching is
