@@ -12,6 +12,7 @@ basis_note.
 from __future__ import annotations
 
 import gzip
+import importlib.resources
 import json
 import logging
 import os
@@ -22,22 +23,36 @@ from typing import Any, ClassVar
 logger = logging.getLogger(__name__)
 
 
+_DATASET_FILENAME = "related-export.jsonl.gz"
+
+
 def _find_default_path() -> Path:
     """Resolve the default related file path.
 
     Priority:
     1. PYTHEUM_RELATED_PATH env var (absolute or relative to cwd)
-    2. datasets/related-export.jsonl.gz relative to cwd (production)
-    3. <project-root>/datasets/related-export.jsonl.gz relative to this file
+    2. pytheum.datasets package data via importlib.resources (installed wheel)
+    3. datasets/related-export.jsonl.gz relative to cwd (repo root)
+    4. <project-root>/datasets/related-export.jsonl.gz relative to this file
     """
     env = os.environ.get("PYTHEUM_RELATED_PATH")
     if env:
         return Path(env)
-    cwd_path = Path("datasets") / "related-export.jsonl.gz"
+    # importlib.resources: resolves to the bundled copy inside the installed wheel
+    # or the editable-install src tree, whichever is active.
+    try:
+        pkg_ref = importlib.resources.files("pytheum.datasets").joinpath(_DATASET_FILENAME)
+        pkg_path = Path(str(pkg_ref))
+        if pkg_path.exists():
+            return pkg_path
+    except Exception:
+        pass
+    # Fallback: cwd-relative (running from the repo root without installing)
+    cwd_path = Path("datasets") / _DATASET_FILENAME
     if cwd_path.exists():
         return cwd_path
-    # this file: src/pytheum/related/index.py -> project root is 4 parents up
-    return Path(__file__).parent.parent.parent.parent / "datasets" / "related-export.jsonl.gz"
+    # Dev fallback: this file is src/pytheum/related/index.py → root 4 levels up
+    return Path(__file__).parent.parent.parent.parent / "datasets" / _DATASET_FILENAME
 
 
 class RelatedIndex:

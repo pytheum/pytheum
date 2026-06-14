@@ -3,3 +3,7 @@
 # repository lean.  Run `git lfs install` before cloning if you need
 # the actual artifact bytes.
 datasets/*.gz filter=lfs diff=lfs merge=lfs -text
+
+# The copies bundled under src/pytheum/datasets/ are packaged into the wheel
+# and must NOT be LFS-tracked — they need to be real bytes in the wheel.
+src/pytheum/datasets/*.gz -filter -diff -merge -text
