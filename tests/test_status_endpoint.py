@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from pytheum.api.status import handle_status, _is_stale
-
+from pytheum.api.status import _is_stale, handle_status
 
 # ---------------------------------------------------------------------------
 # _is_stale unit tests

@@ -12,7 +12,6 @@ import pytest
 
 from pytheum.api.markets_equivalents import _leg
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -137,7 +136,7 @@ def _make_index_with_pair(
 @pytest.mark.asyncio
 async def test_collection_endpoint_include_rules_true_legs_have_resolution():
     """GET /v1/markets/equivalents?include_rules=true — each leg carries resolution."""
-    from pytheum.api.markets_equivalents import handle_markets_equivalents, _cache
+    from pytheum.api.markets_equivalents import _cache, handle_markets_equivalents
 
     _cache.clear()
 
@@ -174,7 +173,7 @@ async def test_collection_endpoint_include_rules_true_legs_have_resolution():
 @pytest.mark.asyncio
 async def test_collection_endpoint_include_rules_false_legs_no_resolution():
     """GET /v1/markets/equivalents — legs do NOT carry resolution by default."""
-    from pytheum.api.markets_equivalents import handle_markets_equivalents, _cache
+    from pytheum.api.markets_equivalents import _cache, handle_markets_equivalents
 
     _cache.clear()
 
