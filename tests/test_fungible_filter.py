@@ -12,7 +12,6 @@ import pytest
 
 from pytheum.equivalence.index import EquivalenceIndex, is_fungible_method
 
-
 # ---------------------------------------------------------------------------
 # Shared fake pair data
 # ---------------------------------------------------------------------------
@@ -267,7 +266,7 @@ async def test_handle_markets_matched_fungible_only_excluded_count_correct():
 @pytest.mark.asyncio
 async def test_handle_markets_equivalents_fungible_only():
     """Collection endpoint: fungible_only=true restricts pairs served."""
-    from pytheum.api.markets_equivalents import handle_markets_equivalents, _cache
+    from pytheum.api.markets_equivalents import _cache, handle_markets_equivalents
 
     _cache.clear()
 
@@ -290,7 +289,7 @@ async def test_handle_markets_equivalents_fungible_only():
 @pytest.mark.asyncio
 async def test_handle_markets_equivalents_fungible_only_false_default():
     """fungible_only defaults to False; meta echoes it."""
-    from pytheum.api.markets_equivalents import handle_markets_equivalents, _cache
+    from pytheum.api.markets_equivalents import _cache, handle_markets_equivalents
 
     _cache.clear()
     idx = _make_index()
@@ -307,7 +306,7 @@ async def test_handle_markets_equivalents_fungible_only_false_default():
 @pytest.mark.asyncio
 async def test_handle_markets_equivalents_fungible_only_cache_key_varies():
     """Cache hits are keyed by (limit, fungible_only, include_rules) independently."""
-    from pytheum.api.markets_equivalents import handle_markets_equivalents, _cache
+    from pytheum.api.markets_equivalents import _cache, handle_markets_equivalents
 
     _cache.clear()
     idx = _make_index()

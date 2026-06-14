@@ -11,7 +11,6 @@ import pytest
 from pytheum.api.markets_matched import handle_markets_matched
 from pytheum.equivalence.index import EquivalenceIndex
 
-
 # ---------------------------------------------------------------------------
 # Fixture data
 # ---------------------------------------------------------------------------
