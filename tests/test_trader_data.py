@@ -248,7 +248,7 @@ def test_normalize_kalshi_oi_extracts_field() -> None:
 def test_normalize_kalshi_oi_falls_back_to_fp_when_plain_null() -> None:
     """Real Kalshi list/detail shape: `open_interest` is null, the value lives
     in `open_interest_fp` (fixed-point STRING, contracts). Regression for the
-    cofounder follow-up — the plain-field-only read returned null for every
+    OI follow-up — the plain-field-only read returned null for every
     Kalshi market. Live-captured payload shape."""
     real_body = {"market": {
         "ticker": "KXNBA-26-NYK",

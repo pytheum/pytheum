@@ -8,7 +8,7 @@ version = "0.0.1"
 description = "The verified prediction-market graph — routing, registry, config, and dataset tooling"
 readme = "README.md"
 license = { text = "MIT" }
-authors = [{ name = "Pytheum", email = "kwnstantinosanagn@gmail.com" }]
+authors = [{ name = "Pytheum", email = "team@pytheum.com" }]
 requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.27",

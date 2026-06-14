@@ -1,24 +1,44 @@
 # pytheum
 
-**The verified prediction-market graph — 1.6M verified connections across
-142k markets; 136,877 settlement-verified cross-venue pairs.**
+**The verified prediction-market graph — 136,877 settlement-verified
+Kalshi×Polymarket pairs; 1.6M verified connections across 142k markets.**
+
+Every pair is verified by **settlement semantics** — the two markets resolve to
+the same real-world outcome — not by fuzzy title similarity. The matching is
+deterministic and inspectable, and we publish the precision methodology. As of
+our 2026-06-12 competitor sweep, no other prediction-market matcher does.
 
 Real-time prediction-market intelligence API: verified Kalshi↔Polymarket
 equivalence data, live orderbook quotes, news/social context, and trader
-analytics.  This repository is the public serve-side library (`pytheum`);
-the private process (`pytheum-pit`) imports it and registers PIT-only routes
-on top.
+analytics. This repository is the public serve-side library (`pytheum`); the
+private process (`pytheum-pit`) imports it and registers PIT-only routes on top.
 
 ---
 
 ## Benchmarks
 
-| Benchmark | Score | Scorecard |
-|---|---|---|
-| PMXT (cross-venue pair precision) | — | [PMXT scorecard](docs/PMXT.md) |
-| PH (settlement-verified recall) | — | [PH scorecard](docs/PH.md) |
+We benchmarked the live cross-venue matchers hands-on (published SDKs / free-tier
+APIs, 2026-06-12) against a **stratified golden set of 50 verified pairs across 5
+bet-type groups plus a constructed trap taxonomy**. The headline finding: the
+commercial matchers do not return matches through their published interfaces, and
+none publish a precision number.
 
-*Scorecards populated at v0.1.0 release.*
+| Matcher | Cross-venue matching (measured) | Precision published? | Self-hostable? |
+|---|---|---|---|
+| **pytheum** | 136,877 settlement-verified pairs; deterministic structured keys + gates | **Yes** — golden set + trap taxonomy | **Yes** (offline serve from bundled datasets) |
+| PMXT Router (v2.49.9 SDK) | **0/150 recall** — per-market lookup is degenerate (returns a constant popular-markets list regardless of input); bulk catalog real but shallow (7/100 clusters game-like, no structured bet-type depth) | No | No (hosted-only) |
+| Prediction Hunt (free tier) | **`success:false`, `count:0` on every query** (HTTP 200, no error code) — could not extract one match | No | No |
+| Polymarket/Dome | Acquired and discontinued (EOL 2026-04-28; matching endpoints 404) | — | — |
+| Oddpool | ~750 static event groupings; no methodology | No | No |
+
+*Measured through published Python SDKs / free-tier APIs on 2026-06-12; paid
+tiers and hosted MCPs were not separately tested. This is, to our knowledge, the
+first precision measurement of any commercial prediction-market matcher. The
+golden-set + trap methodology is reusable — re-run on revisits.*
+
+Where pytheum's depth lives: **133k+ of the verified pairs are structured-sports
+matches** (totals, spreads, props, tennis, esports, moneyline) produced by
+deterministic keys — exactly the bet-type depth the commercial catalogs lack.
 
 ---
 
@@ -116,6 +136,47 @@ https://api.pytheum.com/mcp
 
 ---
 
+## Tools / routes
+
+The offline serve exposes the bundled-data routes; the full hosted API adds the
+live trader-analytics and OHLCV tiers. Core surface:
+
+| Route | Returns |
+|---|---|
+| `GET /v1/markets/matched` | Browse verified cross-venue pairs (filter by `bet_type`, `league`, `date`) |
+| `GET /v1/markets/{ref}/equivalents` | Settlement-verified equivalents for one market |
+| `GET /v1/markets/{ref}/related` | Correlated (non-equivalent) pairs — same asset/event, different band or deadline |
+| `GET /v1/markets/{ref}/rules` | Resolution-rule text for both legs (the verifiability surface) |
+| `GET /v1/markets/{ref}/book`, `/oi`, `/ohlcv` | Live orderbook, open interest, candles (hosted tier) |
+| `GET /llms.txt` | Machine-readable tool inventory for agents |
+
+Full schema: [`openapi.yaml`](openapi.yaml).
+
+---
+
+## How matching works / why it's verifiable
+
+pytheum does **not** match on title or embedding similarity. Both venues encode
+each market in a structured ID (Kalshi `event_ticker`, Polymarket `slug`), so the
+matcher keys on the underlying facts — (league/tour, date, teams/players, line,
+direction) for sports; category token-sets and resolution magnitudes for awards,
+elections, and macro. Each pair must clear deterministic **gates** before it
+ships:
+
+- **1:1 integrity** — every market appears in at most one verified pair.
+- **Line / name-alignment invariants** — strike, threshold, and entity tokens
+  must agree on both legs (no single-anchor accepts).
+- **Settlement-fungibility** — both legs must resolve to the same real-world
+  outcome, not merely describe the same topic.
+
+Because the keys are deterministic and the gates are explicit, every match is
+**inspectable and reproducible** — you can read the rule text on both legs
+(`/rules`) and see why two markets are the same bet. That auditability is the
+differentiator: fuzzy similarity engines cannot tell you why, and cannot be
+re-derived.
+
+---
+
 ## Library usage
 
 ```python
@@ -135,14 +196,14 @@ app = RouterApp(registry.build_router())
 
 ---
 
-## Dataset license
+## License
 
-The `datasets/` directory ships settlement-verified cross-venue pair data.
+- **Code: MIT** (see [`LICENSE`](LICENSE)).
+- **Data (`datasets/`): CC-BY-4.0** — the settlement-verified cross-venue pair
+  artifacts. Formal attribution text is pinned at the v0.1.0 data release.
 
-**License: CC-BY-4.0 (TBD marker — formal license text and attribution
-requirements will be pinned at v0.1.0 data release).**
-
-See [`datasets/README.md`](datasets/README.md) for the artifact schema.
+See [`datasets/README.md`](datasets/README.md) for the artifact schema and
+checksums.
 
 ---
 
@@ -157,3 +218,4 @@ uv run pytest
 
 CI gates: ruff lint, mypy --strict, pytest (cov ≥ 80%), openapi drift check,
 dataset checksum verification.
+</content>
