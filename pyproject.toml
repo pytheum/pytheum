@@ -29,8 +29,14 @@ dev = [
     "ruff>=0.5",
 ]
 
+[project.scripts]
+pytheum = "pytheum.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"pytheum.datasets" = ["*.gz", "MANIFEST.json"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

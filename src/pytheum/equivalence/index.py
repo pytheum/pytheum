@@ -8,6 +8,7 @@ never crashes the server.
 from __future__ import annotations
 
 import gzip
+import importlib.resources
 import json
 import logging
 import os
@@ -79,22 +80,36 @@ def is_fungible_method(method: str | None) -> bool:
     return has_token
 
 
+_DATASET_FILENAME = "equivalence-export.jsonl.gz"
+
+
 def _find_default_path() -> Path:
     """Resolve the default equivalence file path.
 
     Priority:
     1. PYTHEUM_EQUIVALENCE_PATH env var (absolute or relative to cwd)
-    2. datasets/equivalence-export.jsonl.gz relative to cwd (production)
-    3. <project-root>/datasets/equivalence-export.jsonl.gz relative to this file
+    2. pytheum.datasets package data via importlib.resources (installed wheel)
+    3. datasets/equivalence-export.jsonl.gz relative to cwd (repo root)
+    4. <project-root>/datasets/equivalence-export.jsonl.gz relative to this file
     """
     env = os.environ.get("PYTHEUM_EQUIVALENCE_PATH")
     if env:
         return Path(env)
-    cwd_path = Path("datasets") / "equivalence-export.jsonl.gz"
+    # importlib.resources: resolves to the bundled copy inside the installed wheel
+    # or the editable-install src tree, whichever is active.
+    try:
+        pkg_ref = importlib.resources.files("pytheum.datasets").joinpath(_DATASET_FILENAME)
+        pkg_path = Path(str(pkg_ref))
+        if pkg_path.exists():
+            return pkg_path
+    except Exception:
+        pass
+    # Fallback: cwd-relative (running from the repo root without installing)
+    cwd_path = Path("datasets") / _DATASET_FILENAME
     if cwd_path.exists():
         return cwd_path
-    # this file: src/pytheum/equivalence/index.py -> project root is 4 parents up
-    return Path(__file__).parent.parent.parent.parent / "datasets" / "equivalence-export.jsonl.gz"
+    # Dev fallback: this file is src/pytheum/equivalence/index.py → root 4 levels up
+    return Path(__file__).parent.parent.parent.parent / "datasets" / _DATASET_FILENAME
 
 
 class EquivalenceIndex:

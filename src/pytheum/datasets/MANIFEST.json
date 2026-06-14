@@ -1,0 +1,41 @@
+{
+  "$schema": "https://pytheum.com/schemas/dataset-manifest/v1",
+  "artifacts": [
+    {
+      "name": "equivalence-export.jsonl.gz",
+      "description": "Settlement-verified Kalshi<->Polymarket cross-venue equivalence pairs (136k+ pairs).",
+      "path": "equivalence-export.jsonl.gz",
+      "sha256": "b6c9728c5d7d57ab7c009f2bcb2cd3dcab6c9d7d3f2a6c92226c2851a8305388",
+      "size_bytes": 11260478,
+      "format": "jsonl.gz",
+      "used_by": ["pytheum.equivalence.index.EquivalenceIndex"]
+    },
+    {
+      "name": "related-export.jsonl.gz",
+      "description": "Correlated (non-equivalent) cross-venue market pairs — same asset/event but different bands, sources, or deadlines.",
+      "path": "related-export.jsonl.gz",
+      "sha256": "fdeabb8c31b7ba8ed501e06440d56e4ec1ce6e22b277768e9a0acf72161b18c3",
+      "size_bytes": 29631,
+      "format": "jsonl.gz",
+      "used_by": ["pytheum.related.index.RelatedIndex"]
+    },
+    {
+      "name": "relations-export.jsonl.gz",
+      "description": "Full cross-venue relation pairs including bet_type, league, game_date metadata for all structured-sports matches.",
+      "path": "relations-export.jsonl.gz",
+      "sha256": "5446a9643a48ca5ddef1e0a0fddae163ab28771b5633896fb03e3e0ace0811d2",
+      "size_bytes": 1751833,
+      "format": "jsonl.gz",
+      "used_by": []
+    },
+    {
+      "name": "pm-events-export.jsonl.gz",
+      "description": "Polymarket events export — event metadata used for lookup augmentation.",
+      "path": "pm-events-export.jsonl.gz",
+      "sha256": "08c7541a9a0a2bed38c03ac960a2fc640cbe6c88a56cc4e764450ab3812b73cc",
+      "size_bytes": 412647,
+      "format": "jsonl.gz",
+      "used_by": []
+    }
+  ]
+}
