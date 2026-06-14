@@ -3,7 +3,8 @@
 Clients are constructed ONCE at server start() with no auth credentials
 (public endpoints only — no trading keys). Closed at stop().
 
-TODO: prod pins to git+ssh when pinning pytheum-core in pyproject.toml.
+Note: pytheum-core is an optional runtime dependency; pin it in pyproject.toml
+to enable the live trader-data layer.
 """
 from __future__ import annotations
 

@@ -648,7 +648,7 @@ async def test_concurrent_matched_requests_complete_in_parallel():
 
 @pytest.mark.asyncio
 async def test_handler_ranks_live_pairs_first_over_higher_volume_settled():
-    """Regression (cofounder branch fix/matched-pairs-live-first): settled markets
+    """Regression (matched-pairs live-first): settled markets
     retain lifetime volume, so a pure volume sort surfaces dead pairs on top. A
     live pair (both legs active) must outrank a higher-volume settled pair, and
     each pair must carry is_live."""

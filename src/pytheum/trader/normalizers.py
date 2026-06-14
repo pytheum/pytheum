@@ -172,7 +172,7 @@ def normalize_kalshi_oi(
     # carry the real value in `open_interest_fp` (a fixed-point STRING, in
     # contracts — matches pytheum-core's ws_normalizer, which does
     # Decimal(open_interest_fp) with no scaling). Fall back to it when the plain
-    # field is null. (cofounder follow-up docs/kalshi-oi-still-null-2026-06-13.)
+    # field is null.
     oi = _safe_float(market.get("open_interest"))
     if oi is None:
         oi = _safe_float(market.get("open_interest_fp"))
