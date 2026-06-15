@@ -644,7 +644,7 @@ async def market_flow(market_ref, *, base_url=DEFAULT_BASE, window_hours=24):
 async def screen_markets(*, base_url=DEFAULT_BASE, venues=None, status="active",
                          min_volume=None, max_volume=None, min_liquidity=None,
                          resolves_before=None, resolves_after=None, sort_by="volume",
-                         limit=50, exclude_stale=False):
+                         limit=50, exclude_stale=False, full=False):
     """Structured (non-semantic) market screen — one call vs N semantic searches."""
     lerr = _limit_error(limit)
     if lerr:
@@ -712,6 +712,17 @@ async def screen_markets(*, base_url=DEFAULT_BASE, venues=None, status="active",
             resp["hint"] = (f"0 markets for status={status!r}. status is free-form; common values "
                             "are active, resolved, closed (case-insensitive; omit or 'all'/'any' "
                             "for every status). If you expected results, check the status value.")
+        # Lean by default: the full bundle_outcomes ladder is ~28% of the screen
+        # payload (a 50-row default ran ~70-107KB and blew client token budgets,
+        # probe #264). bundle_top_outcome already carries the favorite leg, so drop
+        # the ladder unless full=true is asked. Restores it on demand for an agent
+        # that wants the whole outcome distribution.
+        if not full and isinstance(resp.get("markets"), list):
+            for _m in resp["markets"]:
+                if isinstance(_m, dict):
+                    _m.pop("bundle_outcomes", None)
+            if isinstance(resp.get("meta"), dict):
+                resp["meta"]["lean"] = True
     return resp
 
 
