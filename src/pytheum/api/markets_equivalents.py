@@ -308,6 +308,7 @@ def _build_equivalent_item(
             "venue": counterpart_venue,
             "question": export_question,
             "bet_type": pair.get("bet_type"),
+            "poly_side": pair.get("poly_side"),
             "confidence": pair.get("confidence"),
             "method": pair.get("method"),
             "implied_yes": None,
@@ -321,6 +322,7 @@ def _build_equivalent_item(
         "venue": counterpart_venue,
         "question": counterpart_row.get("question") or export_question,
         "bet_type": pair.get("bet_type"),
+        "poly_side": pair.get("poly_side"),
         "confidence": pair.get("confidence"),
         "method": pair.get("method"),
         "implied_yes": implied_yes_from_payload(payload),
@@ -428,25 +430,48 @@ async def handle_market_equivalents(
     kalshi_implied: float | None = None
     pm_implied: float | None = None
 
+    # Orientation signals from the matched pair (mirrors t_find_divergences): the
+    # PM implied_yes tracks its FIRST-LISTED token, which may be the OPPOSITE side
+    # of the Kalshi YES on a moneyline. poly_side==1 => flip; an "event" pair maps
+    # market-to-market and needs no flip.
+    _poly_side: Any = None
+    _bet_type: Any = None
     if focal_venue == "kalshi":
         kalshi_implied = focal_implied
         for eq in equivalents:
             if eq.get("venue") == "polymarket" and eq.get("implied_yes") is not None:
                 pm_implied = eq["implied_yes"]
+                _poly_side, _bet_type = eq.get("poly_side"), eq.get("bet_type")
                 break
     elif focal_venue == "polymarket":
         pm_implied = focal_implied
         for eq in equivalents:
             if eq.get("venue") == "kalshi" and eq.get("implied_yes") is not None:
                 kalshi_implied = eq["implied_yes"]
+                _poly_side, _bet_type = eq.get("poly_side"), eq.get("bet_type")
                 break
+
+    # Re-orient the PM side into the Kalshi-YES frame when the verified side-map
+    # says so (side==1 flips; side==0 / event = no flip).
+    if pm_implied is not None and _poly_side == 1:
+        pm_implied = round(1.0 - pm_implied, 6)
 
     if kalshi_implied is not None:
         cross_venue["kalshi_implied"] = kalshi_implied
     if pm_implied is not None:
         cross_venue["pm_implied"] = pm_implied
     if kalshi_implied is not None and pm_implied is not None:
-        cross_venue["spread"] = round(kalshi_implied - pm_implied, 4)
+        # Only emit a spread when orientation is KNOWN. A non-event pair with no
+        # verified side-map may be comparing OPPOSITE sides → a blind kalshi−pm
+        # subtraction is ~2× wrong (probe 2026-06-15: UFC Pereira-vs-Gane printed
+        # 0.065 vs true ~0.035). Mirror t_find_divergences: never guess.
+        if _bet_type == "event" or _poly_side is not None:
+            cross_venue["spread"] = round(kalshi_implied - pm_implied, 4)
+        else:
+            cross_venue["spread"] = None
+            cross_venue["spread_unavailable"] = (
+                "unoriented: pair lacks a verified side-map; use t_find_divergences "
+                "for oriented cross-venue edges")
 
     # Meta block
     meta: dict[str, Any] = {
