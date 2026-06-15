@@ -1,0 +1,32 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.pytheum/pytheum",
+  "title": "pytheum",
+  "description": "Read-only access to the verified prediction-market graph: settlement-verified Kalshi<->Polymarket equivalence pairs, live orderbooks, point-in-time price history, news/social/macro context, and Polymarket trader analytics. 22 tools, all read-only.",
+  "version": "0.0.1",
+  "websiteUrl": "https://api.pytheum.com",
+  "repository": {
+    "url": "https://github.com/pytheum/pytheum",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.pytheum.com/mcp"
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "pytheum",
+      "version": "0.0.1",
+      "transport": { "type": "stdio" }
+    }
+  ],
+  "_meta": {
+    "com.pytheum": {
+      "note": "Reference template for MCP Registry publication. The remote (streamable-http) entry is listable today. The pypi stdio entry requires a `pytheum-mcp` console_scripts entrypoint bound to pytheum.mcp.server:main (stdio) — see docs/mcp/compliance.md. Alternative namespace `com.pytheum/pytheum` via DNS verification on pytheum.com.",
+      "license": { "code": "MIT", "data": "CC-BY-4.0" }
+    }
+  }
+}

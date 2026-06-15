@@ -148,11 +148,7 @@ async def t_market_rules(market_ref: str) -> dict:
 
 @mcp.tool()
 async def t_related_markets(market_ref: str) -> dict:
-    """Correlated cross-venue markets that are NOT settlement-equivalent (different
-    bands/sources/deadlines) — hedge discovery on verified correlations from
-    pytheum's matcher. Each row carries the relation type, both venues' bands, and
-    a basis note explaining exactly how settlement differs. Use
-    t_equivalent_markets for true same-market pairs."""
+    """Correlated cross-venue markets that are NOT settlement-equivalent (different bands/sources/deadlines) — hedge discovery, not arbitrage. `market_ref` must be venue-prefixed — 'kalshi:KXFED-25-MAY' or 'polymarket:558936'. Returns a list of related markets, each carrying the relation type, both venues' bands, and a `basis` note spelling out exactly how settlement differs (so you don't mistake a correlated leg for a fungible hedge). Use when you want a correlated position to contextualize or hedge a market but no exact same-question pair exists; use t_equivalent_markets for true same-market pairs."""
     return await related_markets(market_ref, base_url=DEFAULT_BASE)
 
 
@@ -216,7 +212,7 @@ async def t_ohlcv(
 
 @mcp.tool()
 async def t_open_interest(market_ref: str) -> dict:
-    """Current open interest for a market — live venue fetch, coalesced+cached ~30 s. Returns {open_interest: float|null, venue, ref, source:"live"}. market_ref must be venue-prefixed. Read-only: no trading keys. On venue error returns source:"unavailable"."""
+    """Current open interest (total contracts/shares outstanding) for a market — use to gauge how much capital is committed and whether real depth backs a quote. Live venue fetch, coalesced+cached ~30 s. Returns {open_interest: float|null, venue, ref, source:"live"}. market_ref must be venue-prefixed. Read-only: no trading keys. On venue error returns source:"unavailable"."""
     return await open_interest(market_ref, base_url=DEFAULT_BASE)
 
 
