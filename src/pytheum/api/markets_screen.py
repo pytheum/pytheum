@@ -34,6 +34,12 @@ DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 _SCAN_RESOLUTION_CHARS = 240
 _VALID_SORT = {"volume", "liquidity", "resolution", "move"}
+# When exclude_stale is set, drop a market that is past its resolution date by
+# more than this grace window even if the venue still lists it `active` — the
+# settle-sweep lags and bundle parents never flip, so status alone can't be
+# trusted. The grace preserves the legitimate "ended hours ago, still actively
+# trading / settlement-lag" case while dropping markets dead for days.
+_STALE_GRACE_DAYS = 2.0
 # sort_by=move ranks by |move_24h| over a volume-bounded pool — liquid movers,
 # not unranked noise (the benchmark's critique of SF's /api/changes). The pool
 # bound is honest in meta.sorted_by.
@@ -165,14 +171,24 @@ async def handle_markets_screen(
     dropped_stale = 0
     for r in rows:
         days_to_resolution, is_stale = resolution_horizon(r.get("resolution_at"))
-        # Drop only rows the VENUE no longer calls active (the settle-sweep,
-        # scripts/sweep_settled_markets, keeps status truthful). A market whose
-        # listed end date passed but that still trades on the venue — the
-        # benchmark's Fujimori case, the week's biggest politics mover — stays
-        # visible with is_stale=true as the informational flag.
-        if exclude_stale and is_stale and (r.get("status") or "").lower() != "active":
-            dropped_stale += 1
-            continue
+        # Drop a stale row when EITHER the venue no longer calls it active (the
+        # settle-sweep, scripts/sweep_settled_markets, keeps status truthful)
+        # OR it is past resolution by more than the grace window. The status
+        # check alone is not enough: decided markets routinely keep
+        # status="active" (sweep lag, and bundle parents never flip), so a pure
+        # `status != active` guard let ~$400M of long-resolved markets (Peru
+        # election -64d, Starmer -165d) through exclude_stale. The grace window
+        # still preserves the "ended hours ago, settlement-lag / still trading"
+        # case the informational is_stale flag is for.
+        if exclude_stale and is_stale:
+            status_inactive = (r.get("status") or "").lower() != "active"
+            long_past = (
+                days_to_resolution is not None
+                and days_to_resolution < -_STALE_GRACE_DAYS
+            )
+            if status_inactive or long_past:
+                dropped_stale += 1
+                continue
         markets.append({
             "id": r["id"],
             "question": r.get("question"),
