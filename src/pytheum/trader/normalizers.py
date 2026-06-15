@@ -55,6 +55,10 @@ def _safe_float(v: Any, fallback: float | None = None) -> float | None:
         return fallback
 
 
+# Spreads wider than this make the midpoint untradeable (one-sided / illiquid).
+_WIDE_SPREAD = 0.10
+
+
 def _top_of_book(
     bids: list[list[float]], asks: list[list[float]]
 ) -> dict[str, float | None]:
@@ -76,11 +80,17 @@ def _top_of_book(
     bid_v = top["bid"]
     ask_v = top["ask"]
     if bid_v is not None and ask_v is not None:
-        top["spread"] = round(ask_v - bid_v, 6)
+        spread = round(ask_v - bid_v, 6)
+        top["spread"] = spread
         top["mid"] = round((bid_v + ask_v) / 2, 6)
+        # A midpoint of a very wide / one-sided book is not a tradeable price.
+        # Flag it so consumers don't treat mid as a quote (keep mid for those
+        # who still want the raw midpoint).
+        top["mid_reliable"] = spread <= _WIDE_SPREAD
     else:
         top["spread"] = None
         top["mid"] = None
+        top["mid_reliable"] = False
     return top
 
 
@@ -110,20 +120,24 @@ def normalize_kalshi_book(
             return None
         return [round(p, 6), round(s, 4)]
 
+    # Parse ALL levels, sort, THEN truncate (best-`depth`) — never slice before
+    # sorting, or a worst-first raw order would yield a near-worst top-of-book.
     bids: list[list[float]] = []
-    for lvl in yes_raw[:depth]:
+    for lvl in yes_raw:
         parsed = _parse_level(lvl)
         if parsed:
             bids.append(parsed)
     bids.sort(key=lambda x: x[0], reverse=True)
+    bids = bids[:depth]
 
     asks: list[list[float]] = []
-    for lvl in no_raw[:depth]:
+    for lvl in no_raw:
         parsed = _parse_level(lvl)
         if parsed:
             # Implied ask = 1 - no_bid_price
             asks.append([round(1.0 - parsed[0], 6), parsed[1]])
     asks.sort(key=lambda x: x[0])
+    asks = asks[:depth]
 
     return {
         "bids": bids,
@@ -205,10 +219,17 @@ def normalize_pm_book(
                 out.append([round(p, 6), round(s, 4)])
         return out
 
-    bids = _parse(raw_bids, depth)
+    # The CLOB returns the FULL book ordered worst->best (best bid/ask last).
+    # Parse ALL levels, sort, THEN truncate to depth — slicing to depth first
+    # would discard the best levels and leave a near-worst top-of-book (the
+    # negRisk "mid ~0.5 / bid ~0.02 / ask ~0.93" bug on liquid multi-outcome
+    # markets). top-of-book correctness must not depend on raw array order.
+    bids = _parse(raw_bids, len(raw_bids))
     bids.sort(key=lambda x: x[0], reverse=True)
-    asks = _parse(raw_asks, depth)
+    bids = bids[:depth]
+    asks = _parse(raw_asks, len(raw_asks))
     asks.sort(key=lambda x: x[0])
+    asks = asks[:depth]
 
     return {
         "bids": bids,

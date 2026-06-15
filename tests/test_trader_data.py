@@ -219,6 +219,49 @@ def test_normalize_pm_book_structure() -> None:
     assert isinstance(result["bids"][0][0], float)
 
 
+def test_normalize_pm_book_worst_first_order_regression() -> None:
+    # Real CLOB books arrive ordered worst->best (best bid/ask LAST). Truncating
+    # to `depth` before sorting (the negRisk top-of-book bug) returned the worst
+    # levels as top-of-book — e.g. bid ~0.02 / ask ~0.93 / mid ~0.5 on a market
+    # whose true top was 0.161/0.162. Build that shape and assert the true best.
+    bids = [{"price": f"{0.02 + i * 0.005:.3f}", "size": "100"} for i in range(29)]
+    bids.append({"price": "0.161", "size": "154137.7"})   # true best bid, LAST
+    asks = [{"price": f"{0.93 - i * 0.005:.3f}", "size": "100"} for i in range(29)]
+    asks.append({"price": "0.162", "size": "313163.07"})  # true best ask, LAST
+
+    result = normalize_pm_book(
+        {"bids": bids, "asks": asks}, ref="polymarket:558934", depth=20
+    )
+    top = result["top"]
+    assert top["bid"] == 0.161, f"expected true best bid 0.161, got {top['bid']}"
+    assert top["ask"] == 0.162, f"expected true best ask 0.162, got {top['ask']}"
+    assert top["mid"] == 0.1615
+    assert top["mid_reliable"] is True
+    # depth-limited to the BEST 20, sorted best-first
+    assert len(result["bids"]) == 20
+    assert result["bids"][0][0] == 0.161
+    assert len(result["asks"]) == 20
+    assert result["asks"][0][0] == 0.162
+
+
+def test_top_of_book_mid_reliable_flag() -> None:
+    # Wide one-sided book -> mid present but flagged unreliable.
+    wide = normalize_pm_book(
+        {"bids": [{"price": "0.02", "size": "10"}],
+         "asks": [{"price": "0.93", "size": "10"}]},
+        ref="polymarket:x", depth=20,
+    )["top"]
+    assert wide["mid"] == 0.475
+    assert wide["mid_reliable"] is False
+    # Tight book -> mid reliable.
+    tight = normalize_pm_book(
+        {"bids": [{"price": "0.161", "size": "10"}],
+         "asks": [{"price": "0.162", "size": "10"}]},
+        ref="polymarket:y", depth=20,
+    )["top"]
+    assert tight["mid_reliable"] is True
+
+
 def test_normalize_kalshi_trades_parses_dollar_strings() -> None:
     trades = normalize_kalshi_trades(_FAKE_KALSHI_TRADES, limit=100)
     assert len(trades) == 2
