@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -288,6 +289,53 @@ def _allow(ip: str) -> bool:
     return True
 
 
+# Browser-based MCP clients (the claude.ai / claude.com web "custom connector"
+# flow) send a CORS preflight before connecting and must READ the
+# `mcp-session-id` response header to continue the session. Without CORS the
+# preflight 405s and the response origin is blocked, so the connector hangs
+# forever on "Checking connection…" (works in curl, which ignores CORS). Allow
+# any origin (this is a public, no-auth, drop-a-link connector by design) and
+# expose the session header so browser clients can complete the handshake.
+_CORS_ALLOW_ORIGINS = ["*"]
+_CORS_ALLOW_METHODS = ["GET", "POST", "DELETE", "OPTIONS"]
+_CORS_ALLOW_HEADERS = [
+    "content-type", "authorization", "mcp-session-id", "mcp-protocol-version",
+    "last-event-id",
+]
+_CORS_EXPOSE_HEADERS = ["mcp-session-id"]
+
+
+def _build_http_app() -> Any:
+    """Build the streamable-http MCP ASGI app: CORS (for browser connectors)
+    wrapped by a thin IP rate-limit gate. Extracted from ``http_main`` so the
+    CORS preflight behaviour is unit-testable without binding a port."""
+    from starlette.middleware.cors import CORSMiddleware
+
+    inner = CORSMiddleware(
+        mcp.streamable_http_app(),
+        allow_origins=_CORS_ALLOW_ORIGINS,
+        allow_methods=_CORS_ALLOW_METHODS,
+        allow_headers=_CORS_ALLOW_HEADERS,
+        expose_headers=_CORS_EXPOSE_HEADERS,
+        max_age=86400,
+    )
+
+    async def app(scope, receive, send):  # thin ASGI rate-limit wrapper
+        if scope["type"] == "http" and not _allow(_client_ip(scope)):
+            await send({"type": "http.response.start", "status": 429,
+                        "headers": [(b"content-type", b"application/json"),
+                                    (b"retry-after", b"5"),
+                                    # CORS on the 429 too, or a rate-limited
+                                    # browser client sees an opaque failure.
+                                    (b"access-control-allow-origin", b"*")]})
+            await send({"type": "http.response.body",
+                        "body": b'{"error":"rate_limited","retry_after_s":5}'})
+            return
+        await inner(scope, receive, send)  # http (allowed) + lifespan pass through
+
+    return app
+
+
 def http_main() -> None:
     """Serve the streamable-http MCP app (remote connector) with rate limiting."""
     import uvicorn
@@ -300,18 +348,7 @@ def http_main() -> None:
     mcp.settings.transport_security = TransportSecuritySettings(
         enable_dns_rebinding_protection=False)
 
-    inner = mcp.streamable_http_app()
-
-    async def app(scope, receive, send):  # thin ASGI rate-limit wrapper
-        if scope["type"] == "http" and not _allow(_client_ip(scope)):
-            await send({"type": "http.response.start", "status": 429,
-                        "headers": [(b"content-type", b"application/json"),
-                                    (b"retry-after", b"5")]})
-            await send({"type": "http.response.body",
-                        "body": b'{"error":"rate_limited","retry_after_s":5}'})
-            return
-        await inner(scope, receive, send)  # http (allowed) + lifespan pass through
-
+    app = _build_http_app()
     port = int(os.environ.get("PYTHEUM_MCP_HTTP_PORT", "8444"))
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
 
