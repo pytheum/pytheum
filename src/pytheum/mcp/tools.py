@@ -1210,6 +1210,21 @@ def _trunc_rules(text: str | None) -> str | None:
     return text[:_RULES_TRUNC] + ("…" if len(text) > _RULES_TRUNC else "")
 
 
+# Bet types whose two legs quote the SAME single binary outcome on both venues,
+# so YES == YES and no side-map is needed (direct orientation is correct):
+#   event        — generic binary "will X happen"
+#   house_party  — "Will the <party> Party win <district>"; the Kalshi ticker's
+#                  -D/-R suffix matches the PM market's party (verified: KS03-D ↔
+#                  "Will the Democratic Party win the KS-03").
+# Game/match types (moneyline/spread/total/tennis_ml/esports_*/ufc_ml/btts/props)
+# are NOT here: the Polymarket leg's implied_yes is its first-listed outcome,
+# which may be the OTHER side than the Kalshi ticker — those genuinely need the
+# verified side-map (scripts/map_pair_sides) and are excluded when unmapped.
+# Excluding self-oriented binary pairs is the bug that left the scanner empty
+# (it dropped 83/84 house_party pairs as "unmapped orientation").
+_SELF_ORIENTED_BET_TYPES = frozenset({"event", "house_party"})
+
+
 async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float = 0.0,
                            limit: int = 10, seed_limit: int = 12,
                            include_rules: bool = True,
@@ -1262,7 +1277,7 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
         # are re-oriented and scored; unmapped non-event pairs are excluded,
         # never guessed.
         side = p.get("poly_side")
-        if p.get("bet_type") not in ("event",) and side is None:
+        if p.get("bet_type") not in _SELF_ORIENTED_BET_TYPES and side is None:
             orientation_excluded += 1
             continue
         if side is not None:
