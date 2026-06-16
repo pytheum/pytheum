@@ -37,7 +37,9 @@ _ROWS = [
     # venue already settled -> drop
     {"id": "polymarket:settled", "question": "Some resolved market", "venue": "polymarket",
      "status": "resolved", "resolution_at": _at(-1), "volume_usd": 5_000_000.0},
-    # ended hours ago, still actively trading (within grace) -> KEEP
+    # ended hours ago, venue still lists active (is_stale) -> MUST drop under
+    # exclude_stale (a live-trader dogfood got WC games back at -0.4d despite
+    # exclude_stale=true; an explicit exclude means a clean board)
     {"id": "polymarket:justended", "question": "Game last night", "venue": "polymarket",
      "status": "active", "resolution_at": _at(-0.4), "volume_usd": 2_000_000.0},
     # genuinely live -> KEEP
@@ -52,11 +54,11 @@ async def test_exclude_stale_drops_long_dead_active_markets():
         {"status": "any", "exclude_stale": "true"}, dao=dao
     )
     ids = {m["id"] for m in body["markets"]}
-    assert "polymarket:dead64" not in ids       # -64d active -> dropped (the bug)
+    assert "polymarket:dead64" not in ids        # -64d active -> dropped
     assert "polymarket:settled" not in ids       # venue-settled -> dropped
-    assert "polymarket:justended" in ids         # within grace -> kept
+    assert "polymarket:justended" not in ids     # -0.4d is_stale -> dropped (no grace)
     assert "polymarket:live" in ids              # live -> kept
-    assert body["meta"]["dropped_stale"] == 2
+    assert body["meta"]["dropped_stale"] == 3
 
 
 async def test_no_exclude_stale_keeps_everything_with_flag():
