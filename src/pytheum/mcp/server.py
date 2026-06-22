@@ -33,6 +33,7 @@ from pytheum.mcp.tools import (
     event_related_markets,
     find_divergences,
     find_markets,
+    get_market,
     leaderboard,
     market_context,
     market_flow,
@@ -145,6 +146,12 @@ async def t_equivalent_markets(market_ref: str) -> dict:
 async def t_market_rules(market_ref: str) -> dict:
     """Resolution rules text for a market AND its settlement-verified cross-venue equivalent, side by side, with deadlines — exactly how each venue decides the outcome. Use before treating two venues' prices as comparable: small wording differences (strict-vs-inclusive thresholds, different settlement sources, deadline gaps) make seemingly identical markets resolve differently. `market_ref` must be venue-prefixed — 'kalshi:KXFED-25-MAY' or 'polymarket:558936'. Returns: `market` (focal market with full `resolution` rules text, `resolution_at`, `url`), `equivalent` (same fields for the verified counterpart; null if no cross-venue pair), `comparison` (deadlines.kalshi / deadlines.polymarket, same_deadline_day bool-or-null, confidence, method from the dataset), and `meta` (pairs_loaded, dataset_version, matched_via). When the focal market is unknown to the store but present in the equivalence index, titles are returned with null rules text."""
     return await market_rules(market_ref, base_url=DEFAULT_BASE)
+
+
+@mcp.tool()
+async def t_get_market(market_ref: str) -> dict:
+    """Lean fetch of ONE market's CORE by ref — the fast "get this market" call when an agent lands with a venue id or a market URL and doesn't need the full t_market_context payload (probability ladder + sibling markets + fetched news). `market_ref` is venue-prefixed ('kalshi:KXFED-25-MAY', 'polymarket:558936', 'polymarket:0x<cond>', a slug) or a market URL; a raw Kalshi ticker also resolves. Returns `market` {id, venue, question, status, implied_yes, book (bid/ask/spread/sizes), volume_usd, condition_id, resolution_status, resolution_at, url, found} and `meta` {has_equivalent (true → drill into t_equivalent_markets for the cross-venue twin + spread), matched_via, pairs_loaded}. When the market isn't in the store, `market.found=false` + `meta.degraded` rather than an error. Use t_market_context instead when you need rules, the ladder, siblings, or news; t_find_markets/t_screen to discover by query/filter."""
+    return await get_market(market_ref, base_url=DEFAULT_BASE)
 
 
 @mcp.tool()

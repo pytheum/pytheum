@@ -23,6 +23,7 @@ from typing import Any
 
 from pytheum.api.markets_book import handle_market_book
 from pytheum.api.markets_equivalents import handle_market_equivalents, handle_markets_equivalents
+from pytheum.api.markets_get import handle_market_get
 from pytheum.api.markets_holders import handle_market_holders
 from pytheum.api.markets_matched import handle_markets_matched
 from pytheum.api.markets_ohlcv import handle_market_ohlcv
@@ -65,6 +66,9 @@ def register_group_A(
 
     async def _market_rules(ref: str, query: dict[str, str]) -> tuple[int, dict[str, Any]]:
         return await handle_market_rules(ref, query, dao=dao, equivalence=equivalence)
+
+    async def _market_get(ref: str, query: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        return await handle_market_get(ref, query, dao=dao, equivalence=equivalence)
 
     async def _market_related(ref: str, query: dict[str, str]) -> tuple[int, dict[str, Any]]:
         return await handle_market_related(ref, query, dao=dao, related=related)
@@ -109,6 +113,11 @@ def register_group_A(
         "GET", "/v1/markets/{ref}/rules", _market_rules,
         summary="Full resolution rules for a market and its cross-venue equivalent.",
         tags=["equivalence"],
+    ))
+    registry.add(RouteSpec(
+        "GET", "/v1/markets/{ref}/core", _market_get,
+        summary="Lean single-market fetch (price/book/status/resolution) by ref.",
+        tags=["markets"],
     ))
     registry.add(RouteSpec(
         "GET", "/v1/markets/{ref}/related", _market_related,
