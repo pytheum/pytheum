@@ -446,6 +446,19 @@ async def service_status(
     return await _get("/v1/status", {}, base_url)
 
 
+async def service_quality(
+    *,
+    base_url: str = DEFAULT_BASE,
+) -> dict[str, Any]:
+    """Fetch the /v1/quality endpoint — keyless, no auth required.
+
+    Returns the dataset's quality/integrity posture: tier split (fungible vs
+    judged), method/bet-type composition, the enforced build-time integrity
+    invariants, and an honest precision block (audited_pct is null by design).
+    """
+    return await _get("/v1/quality", {}, base_url)
+
+
 async def market_context(
     market_ref: str,
     *,
