@@ -3,21 +3,25 @@
   "artifacts": [
     {
       "name": "equivalence-export.jsonl.gz",
-      "description": "Settlement-verified Kalshi<->Polymarket cross-venue equivalence pairs (136k+ pairs).",
+      "description": "Settlement-verified Kalshi<->Polymarket cross-venue equivalence pairs (139,145 pairs). Liveness-ordered (future/soonest-resolving first) with per-pair resolution_date.",
       "path": "equivalence-export.jsonl.gz",
-      "sha256": "b6c9728c5d7d57ab7c009f2bcb2cd3dcab6c9d7d3f2a6c92226c2851a8305388",
-      "size_bytes": 11260478,
+      "sha256": "7e2274ca8353db9ffea095f11bf26106e4f84b94604c9c0980f3f50dbbc5779e",
+      "size_bytes": 12484966,
       "format": "jsonl.gz",
-      "used_by": ["pytheum.equivalence.index.EquivalenceIndex"]
+      "used_by": [
+        "pytheum.equivalence.index.EquivalenceIndex"
+      ]
     },
     {
       "name": "related-export.jsonl.gz",
-      "description": "Correlated (non-equivalent) cross-venue market pairs — same asset/event but different bands, sources, or deadlines.",
+      "description": "Correlated (non-equivalent) cross-venue market pairs \u2014 same asset/event but different bands, sources, or deadlines.",
       "path": "related-export.jsonl.gz",
       "sha256": "fdeabb8c31b7ba8ed501e06440d56e4ec1ce6e22b277768e9a0acf72161b18c3",
       "size_bytes": 29631,
       "format": "jsonl.gz",
-      "used_by": ["pytheum.related.index.RelatedIndex"]
+      "used_by": [
+        "pytheum.related.index.RelatedIndex"
+      ]
     },
     {
       "name": "relations-export.jsonl.gz",
@@ -30,7 +34,7 @@
     },
     {
       "name": "pm-events-export.jsonl.gz",
-      "description": "Polymarket events export — event metadata used for lookup augmentation.",
+      "description": "Polymarket events export \u2014 event metadata used for lookup augmentation.",
       "path": "pm-events-export.jsonl.gz",
       "sha256": "08c7541a9a0a2bed38c03ac960a2fc640cbe6c88a56cc4e764450ab3812b73cc",
       "size_bytes": 412647,
