@@ -1,0 +1,28 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.pytheum/mcp",
+  "description": "MCP server for the pytheum prediction-market context API — routes news/social/macro events to relevant Kalshi, Polymarket, and Manifold markets, and surfaces verified cross-venue equivalents.",
+  "repository": {
+    "url": "https://github.com/pytheum/pytheum",
+    "source": "github"
+  },
+  "version": "0.5.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@pytheum/mcp",
+      "version": "0.5.0",
+      "transport": {
+        "type": "stdio"
+      }
+    },
+    {
+      "registryType": "pypi",
+      "identifier": "pytheum",
+      "version": "0.5.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
