@@ -87,7 +87,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          lfs: true  # pull LFS objects so hashes can be verified
       - name: Verify checksums
         run: python scripts/verify_checksums.py datasets/
 
