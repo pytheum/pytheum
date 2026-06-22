@@ -192,7 +192,9 @@ class VenueFallbackOhlcv(OhlcvProvider):
             return body  # type: ignore[no-any-return]
 
         try:
-            body = await self._cache.get_or_fetch(cache_key, _TTL_OHLCV, _do)
+            body = await self._cache.get_or_fetch(
+                cache_key, _TTL_OHLCV, _do, venue="kalshi"
+            )
         except Exception as exc:
             logger.warning("kalshi ohlcv fetch failed ticker=%s: %s", ticker, exc)
             return None
@@ -250,7 +252,7 @@ class VenueFallbackOhlcv(OhlcvProvider):
 
         try:
             resolved: PmResolved = await self._cache.get_or_fetch(
-                resolve_key, _TTL_RESOLVE, _resolve
+                resolve_key, _TTL_RESOLVE, _resolve, venue="polymarket"
             )
         except Exception as exc:
             logger.warning("pm resolve failed ref=%s: %s", ref_body, exc)
@@ -273,7 +275,9 @@ class VenueFallbackOhlcv(OhlcvProvider):
             return body  # type: ignore[no-any-return]
 
         try:
-            body = await self._cache.get_or_fetch(cache_key, _TTL_OHLCV, _fetch)
+            body = await self._cache.get_or_fetch(
+                cache_key, _TTL_OHLCV, _fetch, venue="polymarket"
+            )
         except Exception as exc:
             logger.warning("pm ohlcv fetch failed ref=%s: %s", ref_body, exc)
             return None

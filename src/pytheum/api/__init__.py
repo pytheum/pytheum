@@ -33,6 +33,7 @@ from pytheum.api.markets_rules import handle_market_rules
 from pytheum.api.markets_screen import handle_markets_screen
 from pytheum.api.markets_trades import handle_market_trades
 from pytheum.api.markets_whale_trades import handle_market_whale_trades
+from pytheum.api.metrics import handle_metrics
 from pytheum.api.status import handle_status
 from pytheum.api.traders_leaderboard import handle_traders_leaderboard
 from pytheum.api.traders_profile import handle_trader_profile
@@ -55,6 +56,9 @@ def register_group_A(
     async def _status(query: dict[str, str]) -> tuple[int, dict[str, Any]]:
         return await handle_status(query, dao=dao, equivalence=equivalence, related=related)
 
+    async def _metrics(query: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        return await handle_metrics(query)
+
     async def _markets_equivalents(query: dict[str, str]) -> tuple[int, dict[str, Any]]:
         return await handle_markets_equivalents(query, dao=dao, equivalence=equivalence)
 
@@ -76,6 +80,14 @@ def register_group_A(
     registry.add(RouteSpec(
         "GET", "/v1/status", _status,
         summary="Service health check and dataset summary — keyless.",
+        tags=["meta"],
+    ))
+    registry.add(RouteSpec(
+        "GET", "/v1/metrics", _metrics,
+        summary=(
+            "Upstream venue-call counters (kalshi/polymarket): requests, cache "
+            "hits, coalesced joins, real upstream calls, errors — keyless."
+        ),
         tags=["meta"],
     ))
     registry.add(RouteSpec(

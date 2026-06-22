@@ -97,7 +97,9 @@ async def handle_trader_profile(
         }
 
     try:
-        result = await _cache.get_or_fetch(cache_key, _TTL_PROFILE, _fetch)
+        result = await _cache.get_or_fetch(
+            cache_key, _TTL_PROFILE, _fetch, venue="polymarket"
+        )
     except Exception as exc:
         logger.warning("pm trader profile fetch failed wallet=%s: %s", wallet, exc)
         return _error_response(wallet, exc)
