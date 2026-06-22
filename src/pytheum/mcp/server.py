@@ -47,6 +47,7 @@ from pytheum.mcp.tools import (
     recent_trades,
     related_markets,
     screen_markets,
+    search_markets,
     service_status,
     trader_profile,
     whale_trades,
@@ -186,6 +187,17 @@ async def t_screen(
         max_volume=max_volume, min_liquidity=min_liquidity, resolves_before=resolves_before,
         resolves_after=resolves_after, sort_by=sort_by, limit=limit,
         exclude_stale=exclude_stale, full=full)
+
+
+@mcp.tool()
+async def t_search_markets(
+    q: str,
+    venue: str | list[str] | None = None,
+    status: str = "active",
+    limit: int = 50,
+) -> dict:
+    """Text search over market TITLES across both venues — the cheap, exact complement to t_find_markets' semantic search. AND-matches your query's title tokens (so 'super bowl winner' must contain all of super/bowl/winner) and ranks by volume; NON-semantic, so it nails exact terms a paraphrase-based kNN can miss (a ticker like KXBTC, a player name, 'H5N1') but will NOT find conceptual paraphrases — for "markets like this article/headline" use t_find_markets instead. Rows carry the same triage shape as t_screen (implied_yes/book/resolution/resolution_status/condition_id + the verified cross_venue twin + quote-staleness) so you can size an edge without a t_get_market round-trip. `q` is required (non-empty). `venue` is kalshi | polymarket | manifold (case-insensitive string/comma-list/array; aliases like "poly" and "all"/"both"→all venues; unknown venue → error not empty; omit for all). `status` defaults to 'active' (case-insensitive; 'any'/'all' → every status). `limit` 1–200, default 50. Keyless. An empty result carries a meta.hint distinguishing "no such title" from "you wanted a semantic match"."""
+    return await search_markets(q, base_url=DEFAULT_BASE, venue=venue, status=status, limit=limit)
 
 
 @mcp.tool()
