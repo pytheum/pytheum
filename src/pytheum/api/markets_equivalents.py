@@ -36,6 +36,18 @@ from pytheum.equivalence.index import is_fungible_method
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
+# Over-fetch tuning for the collection browse.  The export is liveness-ordered
+# (soonest-resolving first), so already-resolved pairs cluster at the FRONT —
+# a naive first-`limit` slice returns an all-dead page once the export ages a
+# day (every soonest-first row has since resolved and gets swept stale).  So:
+# (1) skip row-level-stale rows up front via the export's resolution_date (cheap,
+#     no DB) while scanning at most _SCAN_BUDGET_ROWS rows, and
+# (2) hydrate a multiple of the page (_OVERFETCH_FACTOR, capped at
+#     _MAX_CANDIDATES) so the handler's authoritative book-level stale drops
+#     don't starve the result below `limit`.
+_SCAN_BUDGET_ROWS = 3000
+_OVERFETCH_FACTOR = 4
+_MAX_CANDIDATES = 300
 
 # The pairs join (136k equivalence rows x markets) plus the 300-id staleness
 # window run ~20s on the shared-compute DB — past the MCP transport's patience
@@ -88,6 +100,7 @@ def _leg(r: dict[str, Any], *, include_rules: bool = False) -> dict[str, Any]:
 
 def _index_rows_to_pairs(
     rows: list[dict[str, Any]], *, limit: int, fungible_only: bool = False,
+    scan_budget: int = _SCAN_BUDGET_ROWS, skip_row_stale: bool = True,
 ) -> list[dict[str, Any]]:
     """Translate EquivalenceIndex export rows to the DB pair format used by
     the collection handler.  poly_side / poly_outcome are null because the
@@ -95,15 +108,28 @@ def _index_rows_to_pairs(
 
     When ``fungible_only=True`` rows whose ``method`` is not deterministic /
     human-adjudicated (see ``is_fungible_method``) are skipped.
+
+    The export is soonest-resolving-first, so already-resolved pairs cluster at
+    the front.  When ``skip_row_stale`` (default), rows whose ``resolution_date``
+    is already in the past are skipped here — cheap, no DB — so they don't crowd
+    out live pairs before the handler's authoritative book-level staleness check.
+    At most ``scan_budget`` rows are examined so an aged/large dead front can't
+    turn this into a full-corpus scan on every request.
     """
     pairs: list[dict[str, Any]] = []
-    for row in rows:
+    for examined, row in enumerate(rows):
+        if examined >= scan_budget:
+            break
         if fungible_only and not is_fungible_method(row.get("method")):
             continue
         k_ref = row.get("kalshi_ref")
         p_ref = row.get("pm_ref")
         if not k_ref or not p_ref:
             continue
+        if skip_row_stale:
+            _, row_stale = resolution_horizon(row.get("resolution_date"))
+            if row_stale:
+                continue
         pairs.append({
             "kalshi_market_id": k_ref,
             "polymarket_market_id": p_ref,
@@ -171,11 +197,16 @@ async def handle_markets_equivalents(
     # Source pairs from index (preferred) or DAO fallback.
     # When dao=None (secretless / no-DB config) the DAO path is skipped; the
     # index path still provides the full pair set, just without live hydration.
+    # Over-fetch CANDIDATES (not just `limit`): the soonest-first export ages so
+    # its front resolves day-over-day, and book-level staleness drops more — so
+    # we scan/hydrate a multiple of the page and truncate to `limit` LIVE pairs
+    # below.  Without this, an aged export returns an empty page (the bug).
+    candidate_cap = min(max(limit * _OVERFETCH_FACTOR, limit), _MAX_CANDIDATES)
     if equivalence is not None:
-        pairs = _index_rows_to_pairs(equivalence._rows, limit=limit,
+        pairs = _index_rows_to_pairs(equivalence._rows, limit=candidate_cap,
                                      fungible_only=fungible_only)
     elif dao is not None:
-        pairs = await dao.fetch_equivalence_pairs(limit=limit)
+        pairs = await dao.fetch_equivalence_pairs(limit=candidate_cap)
     else:
         pairs = []
 
@@ -213,12 +244,16 @@ async def handle_markets_equivalents(
             "a": a,
             "b": b,
         })
+        # We over-fetched candidates; stop once the page is full of LIVE pairs.
+        if len(out) >= limit:
+            break
     body = {
         "pairs": out,
         "count": len(out),
         "meta": {
             "limit": limit,
             "dropped_stale": dropped_stale,
+            "candidates_hydrated": len(pairs),
             "fungible_only": fungible_only,
             "include_rules": include_rules,
             "cache_ttl_s": _CACHE_TTL_S,
