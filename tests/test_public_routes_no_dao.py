@@ -118,3 +118,17 @@ async def test_screen_degraded_reason_is_db_unavailable() -> None:
         resp = await client.get("/v1/markets/screen")
     body = resp.json()
     assert body["meta"]["degraded_reason"] == "db_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_search_returns_200_without_dao() -> None:
+    """GET /v1/markets/search must register (before /{ref}) and degrade to 200,
+    not 500, when dao=None. With a query it reports db_unavailable; without a
+    query it reports the missing_query error — both 200."""
+    async with _client(_build_router_no_dao()) as client:
+        resp = await client.get("/v1/markets/search?q=super+bowl")
+        resp_noq = await client.get("/v1/markets/search")
+    assert resp.status_code == 200, f"expected 200, got {resp.status_code}"
+    assert resp.json()["meta"]["degraded_reason"] == "db_unavailable"
+    assert resp_noq.status_code == 200
+    assert resp_noq.json()["meta"]["error"] == "missing_query"

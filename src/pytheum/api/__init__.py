@@ -31,6 +31,7 @@ from pytheum.api.markets_oi import handle_market_oi
 from pytheum.api.markets_related import handle_market_related
 from pytheum.api.markets_rules import handle_market_rules
 from pytheum.api.markets_screen import handle_markets_screen
+from pytheum.api.markets_search import handle_markets_search
 from pytheum.api.markets_trades import handle_market_trades
 from pytheum.api.markets_whale_trades import handle_market_whale_trades
 from pytheum.api.metrics import handle_metrics
@@ -147,9 +148,10 @@ def register_group_B(
     """Register all Group B routes into *registry*.
 
     Group B covers the trader-data surface (live venue quotes) and the
-    /screen discovery endpoint:
+    /screen + /search discovery endpoints:
 
     - GET /v1/markets/screen
+    - GET /v1/markets/search                 (registered BEFORE /{ref} catch-all)
     - GET /v1/markets/whale-trades          (registered BEFORE /{ref} catch-all)
     - GET /v1/markets/{ref}/book
     - GET /v1/markets/{ref}/trades
@@ -165,6 +167,9 @@ def register_group_B(
 
     async def _markets_screen(query: dict[str, str]) -> tuple[int, dict[str, Any]]:
         return await handle_markets_screen(query, dao=dao)
+
+    async def _markets_search(query: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        return await handle_markets_search(query, dao=dao)
 
     # whale-trades must be registered BEFORE /{ref} catch-all routes.
     async def _whale_trades(query: dict[str, str]) -> tuple[int, dict[str, Any]]:
@@ -209,6 +214,21 @@ def register_group_B(
             "sort_by": "volume | liquidity | resolution | move",
             "limit": "Maximum number of results (default 50, max 200)",
             "exclude_stale": "Drop expired/resolved markets (true/false)",
+        },
+    ))
+    registry.add(RouteSpec(
+        "GET", "/v1/markets/search", _markets_search,
+        summary=(
+            "Text search over market titles (non-semantic): AND-matched title "
+            "tokens across both venues, ranked by volume. Keyless. Cheap exact "
+            "complement to the semantic /relevant-to path."
+        ),
+        tags=["markets"],
+        params={
+            "q": "Search string — title tokens AND-matched (required)",
+            "venues": "Comma-separated venue list: kalshi, polymarket",
+            "status": "Market status (default active; any/all → no filter)",
+            "limit": "Maximum number of results (default 50, max 200)",
         },
     ))
     registry.add(RouteSpec(

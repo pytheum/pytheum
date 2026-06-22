@@ -58,6 +58,41 @@ paths:
         description: Maximum number of results (default 50)
         schema:
           type: string
+  /v1/markets/search:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: 'Text search over market titles (non-semantic): AND-matched title tokens
+        across both venues, ranked by volume. Keyless. Cheap exact complement to the
+        semantic /relevant-to path.'
+      tags:
+      - markets
+      parameters:
+      - name: q
+        in: query
+        required: false
+        description: Search string — title tokens AND-matched (required)
+        schema:
+          type: string
+      - name: venues
+        in: query
+        required: false
+        description: 'Comma-separated venue list: kalshi, polymarket'
+        schema:
+          type: string
+      - name: status
+        in: query
+        required: false
+        description: Market status (default active; any/all → no filter)
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Maximum number of results (default 50, max 200)
+        schema:
+          type: string
   /v1/markets/equivalents:
     get:
       responses:

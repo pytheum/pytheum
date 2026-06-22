@@ -83,6 +83,21 @@ def build_stub_registry() -> RouterRegistry:
         },
     ))
     reg.add(RouteSpec(
+        "GET", "/v1/markets/search", _stub,
+        summary=(
+            "Text search over market titles (non-semantic): AND-matched title "
+            "tokens across both venues, ranked by volume. Keyless. Cheap exact "
+            "complement to the semantic /relevant-to path."
+        ),
+        tags=["markets"],
+        params={
+            "q": "Search string — title tokens AND-matched (required)",
+            "venues": "Comma-separated venue list: kalshi, polymarket",
+            "status": "Market status (default active; any/all → no filter)",
+            "limit": "Maximum number of results (default 50, max 200)",
+        },
+    ))
+    reg.add(RouteSpec(
         "GET", "/v1/markets/equivalents", _stub,
         summary="Collection of verified Kalshi<->Polymarket pairs with live quotes.",
         tags=["equivalence"],
