@@ -901,6 +901,25 @@ async def market_rules(
     return await _get_market(path, {}, base_url, ref=market_ref)
 
 
+async def get_market(
+    market_ref: str,
+    *,
+    base_url: str = DEFAULT_BASE,
+) -> dict[str, Any]:
+    """Lean single-market fetch by ref — the market CORE (price/book/status/
+    resolution) without the heavy t_market_context payload (ladder/siblings/
+    news). For when an agent lands with a venue id or URL and just wants the
+    one market. `market_ref` is venue-prefixed ('kalshi:...', 'polymarket:...')
+    or a market URL; raw Kalshi tickers also resolve.
+    """
+    market_ref = _normalize_market_ref(market_ref)
+    ref_err = _market_ref_error(market_ref)
+    if ref_err:
+        return ref_err
+    path = f"/v1/markets/{quote(market_ref, safe='')}/core"
+    return await _get_market(path, {}, base_url, ref=market_ref)
+
+
 async def related_markets(
     market_ref: str,
     *,
