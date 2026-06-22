@@ -36,8 +36,11 @@ async def test_handle_quality_adds_integrity_and_honest_precision() -> None:
     assert body["pairs_total"] == 1
     assert body["integrity"]["enforced_at_build"] is True
     assert len(body["integrity"]["invariants"]) >= 3
-    # honest precision posture — no fabricated headline number
-    assert body["precision"]["audited_pct"] is None
+    # honest, tier-scoped audited precision — judged tier measured, deterministic pending
+    aud = body["precision"]["audited"]
+    assert aud["judged_tier_pct"] == 98.7
+    assert aud["judged_tier_ci95"] == [95.4, 99.7]
+    assert aud["deterministic_tier_pct"] is None      # gated, not yet sampled-audited
     assert "version" in body["service"]
 
 

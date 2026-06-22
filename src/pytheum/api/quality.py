@@ -5,10 +5,10 @@ dataset, the deterministic-vs-judged tier split, method/bet-type composition,
 the build-time integrity invariants we enforce, and an HONEST precision posture.
 
 Design discipline: every count is DERIVED from the loaded dataset; the integrity
-block states only invariants the build gates actually enforce; and we do NOT
-publish a headline audited-precision % here (it requires a labeled-sample audit
-and is surfaced separately) — `audited_pct` is null on purpose rather than an
-unbacked number.
+block states only invariants the build gates actually enforce; and the audited
+precision is TIER-SCOPED + point-in-time (not a single whole-corpus headline %)
+— the judged tier (LLM slice) is exhaustively audited; the deterministic tier is
+lint-gated with its sampled audit still pending (`deterministic_tier_pct: null`).
 
 Response shape
 --------------
@@ -19,7 +19,10 @@ Response shape
   "by_method": {...}, "by_bet_type": {...}, "bet_types_total": int,
   "integrity": {"enforced_at_build": true, "invariants": [...], "note": str},
   "precision": {"fungible_tier": str, "judged_tier": str,
-                "audited_pct": null, "audited_note": str},
+                "audited": {"judged_tier_pct": float, "judged_tier_ci95": [lo,hi],
+                            "judged_tier_n": int, "deterministic_tier_pct": null,
+                            "as_of": str, "method": str, "methodology_doc": str},
+                "note": str},
   "service": {"version": str, "now": ISO-8601}
 }
 """
@@ -91,13 +94,28 @@ async def handle_quality(
     body["precision"] = {
         "fungible_tier": ("deterministic / structural — gated to ~0 wrong by the "
                           "structural lint (line + abbrev + name-alignment invariants); "
-                          "not a probabilistic estimate."),
-        "judged_tier": ("LLM-adjudicated — high precision but not structurally "
-                        "guaranteed; treat as needs-rules-confirmation."),
-        "audited_pct": None,
-        "audited_note": ("A labeled-sample audited precision %% is published "
-                         "separately with methodology — intentionally not asserted "
-                         "here to avoid an unbacked number."),
+                          "not a probabilistic estimate. Sampled audit pending."),
+        "judged_tier": ("LLM-adjudicated — exhaustively audited 2026-06-22: 98.7% "
+                        "precision (95% CI 95.4-99.7%, n=155); the 2 false positives "
+                        "found (macro rate-bucket mismatches) were denylisted."),
+        # Tier-scoped audited numbers. Point-in-time + per-tier ON PURPOSE — there
+        # is no single whole-corpus headline %% (that would hide which tier was
+        # measured). The judged tier (the LLM slice where FPs concentrate) was
+        # audited exhaustively; the deterministic tier (99.9% of pairs) is
+        # structurally gated, not yet sampled-audited.
+        "audited": {
+            "judged_tier_pct": 98.7,
+            "judged_tier_ci95": [95.4, 99.7],
+            "judged_tier_n": 155,
+            "deterministic_tier_pct": None,  # lint-gated; sampled audit pending
+            "as_of": "2026-06-22",
+            "method": ("exhaustive in-context adjudication of all judged pairs vs a "
+                       "strict same-outcome rubric (default not-equivalent on doubt)"),
+            "methodology_doc": "docs/research/2026-06-22-judged-tier-precision-audit.md",
+        },
+        "note": ("audited figures are point-in-time and tier-scoped; the judged-tier "
+                 "%% is the AS-AUDITED precision (the 2 FPs found were then remediated, "
+                 "so the shipped judged tier is cleaner than the figure implies)."),
     }
     body["service"] = {
         "version": _get_version(),
