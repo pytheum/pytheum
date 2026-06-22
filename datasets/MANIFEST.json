@@ -3,10 +3,10 @@
   "artifacts": [
     {
       "name": "equivalence-export.jsonl.gz",
-      "description": "Settlement-verified Kalshi<->Polymarket cross-venue equivalence pairs (139,784 pairs). Liveness-ordered (future/soonest-resolving first) with per-pair resolution_date.",
+      "description": "Settlement-verified Kalshi<->Polymarket cross-venue equivalence pairs (139,818 pairs). Liveness-ordered (future/soonest-resolving first) with per-pair resolution_date.",
       "path": "equivalence-export.jsonl.gz",
-      "sha256": "d69c2abe4c493b9b8e0215f3369d0d8eaafb27deacf663bf9b3f49b5faf43902",
-      "size_bytes": 12542371,
+      "sha256": "3d805b4e48b3e69f1db57cbe56c20b2b9976c36051564a9ddedd32dd4001f1c1",
+      "size_bytes": 12545882,
       "format": "jsonl.gz",
       "used_by": [
         "pytheum.equivalence.index.EquivalenceIndex"
