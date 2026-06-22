@@ -1,0 +1,36 @@
+{
+  "name": "@pytheum/mcp",
+  "version": "0.5.0",
+  "mcpName": "io.github.pytheum/mcp",
+  "description": "npm-distributed wrapper that runs the pytheum prediction-market MCP server (the `pytheum-mcp` entry point of the `pytheum` PyPI package) via uv",
+  "type": "module",
+  "bin": {
+    "pytheum-mcp": "bin/pytheum-mcp.js"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "prediction-markets",
+    "polymarket",
+    "kalshi"
+  ],
+  "homepage": "https://api.pytheum.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pytheum/pytheum.git",
+    "directory": "npm"
+  },
+  "license": "MIT"
+}
