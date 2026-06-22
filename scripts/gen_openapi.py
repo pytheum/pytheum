@@ -65,6 +65,14 @@ def build_stub_registry() -> RouterRegistry:
         tags=["meta"],
     ))
     reg.add(RouteSpec(
+        "GET", "/v1/metrics", _stub,
+        summary=(
+            "Upstream venue-call counters (kalshi/polymarket): requests, cache "
+            "hits, coalesced joins, real upstream calls, errors — keyless."
+        ),
+        tags=["meta"],
+    ))
+    reg.add(RouteSpec(
         "GET", "/v1/markets/screen", _stub,
         summary="Structured market screen: filter by venue, status, volume, liquidity.",
         tags=["markets"],

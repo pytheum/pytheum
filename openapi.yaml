@@ -22,6 +22,15 @@ paths:
       summary: Service health check and dataset summary — keyless.
       tags:
       - meta
+  /v1/metrics:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: 'Upstream venue-call counters (kalshi/polymarket): requests, cache
+        hits, coalesced joins, real upstream calls, errors — keyless.'
+      tags:
+      - meta
   /v1/markets/screen:
     get:
       responses:
