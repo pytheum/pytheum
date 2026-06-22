@@ -726,6 +726,50 @@ async def screen_markets(*, base_url=DEFAULT_BASE, venues=None, status="active",
     return resp
 
 
+async def search_markets(
+    q: str,
+    *,
+    base_url: str = DEFAULT_BASE,
+    venue: str | list[str] | None = None,
+    status: str = "active",
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Text search over market titles (non-semantic) — the cheap exact-term
+    complement to find_markets' semantic search. AND-matches title tokens across
+    venues, ranked by volume. `q` is a search string ('super bowl', 'H5N1', a
+    player name, a ticker). `venue` filters; `status` defaults to active
+    (any/all → no filter)."""
+    if not isinstance(q, str) or not q.strip():
+        return {"error": "invalid_query",
+                "hint": "q is required — a non-empty search string (title tokens), e.g. 'super bowl'."}
+    lerr = _limit_error(limit)
+    if lerr:
+        return lerr
+    venue_param, verr = _normalize_venues(venue)
+    if verr:
+        return verr
+    params: dict[str, Any] = {"q": q, "limit": limit}
+    if venue_param:
+        params["venues"] = venue_param
+    if isinstance(status, str):
+        status = status.strip().lower() or "active"
+        params["status"] = status
+    resp = _annotate_play_money(await _get("/v1/markets/search", params, base_url))
+    if isinstance(resp, dict):
+        await _enrich_crypto_spot(resp.get("markets"))
+        # An empty result is indistinguishable from "no such markets" — self-explain
+        # so an agent knows search is substring/token, not semantic (try find_markets
+        # for a paraphrase / related-concept query).
+        if not resp.get("markets"):
+            resp.setdefault("meta", {})
+            if isinstance(resp["meta"], dict):
+                resp["meta"]["hint"] = (
+                    f"0 markets whose title contains all tokens of {q!r}. search is "
+                    "exact substring/token (not semantic) — try fewer/broader words, or "
+                    "t_find_markets for a paraphrase / related-concept query.")
+    return resp
+
+
 # Essential trader fields kept on each market in BATCH mode. The full
 # t_market_context market object (~3KB: resolution text, condition_id,
 # resolution_window_years, is_play_money, …) x 25 refs blows the response token
