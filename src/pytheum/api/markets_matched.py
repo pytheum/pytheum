@@ -19,11 +19,17 @@ sort_by : str, default "volume"
     Sort order for returned pairs.  Accepted values:
 
     * ``volume``  — hydrated Kalshi volume desc, then confidence desc (default).
+    * ``net_edge`` — executable, fee-netted locked-arb edge desc (the HONEST arb
+                     radar); pairs without a two-sided book on both legs sort last.
     * ``spread``  — |kalshi_implied − pm_implied| desc; pairs where either
-                    implied price is missing sort last (no invented spreads).
+                    implied price is missing sort last. NOTE: mid-based, overstates
+                    one-sided books — prefer ``net_edge`` for real arb ranking.
     * ``confidence`` — match confidence desc.
 
     Unknown values silently fall back to ``"volume"``.
+
+    Each pair's ``cross_venue`` block carries ``net_edge`` (executable, fee-netted)
+    and ``executable`` (bool) alongside the mid ``spread`` when both legs are booked.
 limit : int, default 50, max 200
 offset : int, default 0
 """
@@ -35,6 +41,7 @@ from typing import Any
 from pytheum.api.params import (
     book_from_payload,
     implied_yes_from_payload,
+    locked_arb_net_edge,
     parse_limit,
 )
 
@@ -161,7 +168,18 @@ def _cross_venue(
     if pi is not None:
         cv["pm_implied"] = pi
     if ki is not None and pi is not None:
+        # Mid-spread: kept for back-compat, but it OVERSTATES — a wide one-sided
+        # book shows a big |mid diff| that isn't tradeable. `net_edge` below is
+        # the honest, executable, fee-netted number; rank on that.
         cv["spread"] = round(ki - pi, 4)
+    # Executable locked-arb edge (buy YES cheap + buy NO dear, net of Kalshi fee).
+    # Positive = a real arb; ≤0 = the mid-spread was a phantom. Only emitted when
+    # BOTH legs have a two-sided book. Mirrors t_find_divergences so the radar and
+    # the scanner agree.
+    net = locked_arb_net_edge(k_block.get("book"), pm_block.get("book"))
+    if net is not None:
+        cv["net_edge"] = net
+        cv["executable"] = net > 0
     return cv
 
 
@@ -177,6 +195,17 @@ def _build_sort_key(sort_by: str) -> Any:
                 return (False, 0.0)
             return (True, abs(ki - pi))
         return _spread_key
+
+    if sort_by == "net_edge":
+        # The HONEST arb radar: rank by executable, fee-netted edge. Pairs without
+        # a computable net_edge (one leg unpriced / one-sided book) sort last, so
+        # the top rows are real, tradeable edges — not mid-spread phantoms.
+        def _net_edge_key(p: dict[str, Any]) -> tuple[bool, float]:
+            ne = (p.get("cross_venue") or {}).get("net_edge")
+            if ne is None:
+                return (False, 0.0)
+            return (True, ne)
+        return _net_edge_key
 
     if sort_by == "confidence":
         def _conf_key(p: dict[str, Any]) -> float:

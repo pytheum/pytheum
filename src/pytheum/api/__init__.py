@@ -97,7 +97,7 @@ def register_group_A(
             "q": "Substring filter over titles",
             "league": "Filter by league / domain",
             "date": "Filter by event date (YYYY-MM-DD)",
-            "sort_by": "Sort order: volume | spread | confidence",
+            "sort_by": "Sort order: volume | net_edge (executable arb) | spread | confidence",
             "fungible_only": "Restrict to deterministic/human-adjudicated pairs",
             "min_volume": "Minimum Kalshi volume_usd",
             "limit": "Maximum number of results (default 50, max 200)",

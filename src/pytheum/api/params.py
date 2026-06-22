@@ -484,3 +484,46 @@ def flow_flag_from_row(row: dict[str, Any]) -> str | None:
         except (AttributeError, TypeError):
             pass  # unparseable timestamp → fall through and serve the flag
     return flag
+
+
+# Kalshi taker fee follows ~0.07·p·(1−p) per contract (their published curve);
+# Polymarket charges no taker fee. Used to net the cross-venue locked-arb edge so
+# the matched radar reports an EXECUTABLE number, not a mid-spread that dies on
+# fees + one-sided books.
+_KALSHI_FEE_COEF = 0.07
+
+
+def kalshi_fee(price: float) -> float:
+    """Approximate Kalshi taker fee (USD/contract) at a fill price in [0,1]."""
+    return _KALSHI_FEE_COEF * price * (1.0 - price)
+
+
+def locked_arb_net_edge(
+    k_book: dict[str, Any] | None, pm_book: dict[str, Any] | None
+) -> float | None:
+    """Net-of-fees LOCKED cross-venue edge between a Kalshi and a Polymarket book
+    quoting the SAME outcome: buy YES on the cheaper venue + buy NO on the dearer,
+    fee-adjusted. Returns ``1 − min(total cost)`` over both directions (positive =
+    a real executable arb; ≤0 = the mid-spread was a phantom). None when either
+    book lacks both a bid and an ask. Mirrors the divergence scanner's edge so the
+    matched radar and t_find_divergences agree.
+
+    NOTE: assumes direct orientation (YES==YES), correct for binary single-outcome
+    pairs (event / house_party). Game-moneyline pairs need the verified side-map;
+    this number is only as oriented as the caller's legs.
+    """
+    if not isinstance(k_book, dict) or not isinstance(pm_book, dict):
+        return None
+    k_ask, k_bid = k_book.get("ask"), k_book.get("bid")
+    p_ask, p_bid = pm_book.get("ask"), pm_book.get("bid")
+    if not (
+        isinstance(k_ask, (int, float)) and isinstance(k_bid, (int, float))
+        and isinstance(p_ask, (int, float)) and isinstance(p_bid, (int, float))
+    ):
+        return None
+    # Direction A: buy YES on Kalshi (ask + fee), buy NO on PM (1 − pm_bid, no fee).
+    cost_a = (k_ask + kalshi_fee(k_ask)) + (1.0 - p_bid)
+    # Direction B: buy YES on PM (ask, no fee), buy NO on Kalshi (1 − bid + fee).
+    no_k = 1.0 - k_bid
+    cost_b = p_ask + (no_k + kalshi_fee(no_k))
+    return round(1.0 - min(cost_a, cost_b), 4)
