@@ -213,6 +213,19 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
 
+    guide_p = sub.add_parser(
+        "guide",
+        help="Print the agent self-onboarding playbook as JSON.",
+        description="Emit the machine-readable agent playbook (principles, tool "
+                    "inventory, workflow recipes) — the same content as the t_guide "
+                    "MCP tool. Pipe to a file or an agent's context.",
+    )
+    guide_p.add_argument(
+        "--agent",
+        action="store_true",
+        help="Accepted for parity; the guide is always the agent-oriented JSON.",
+    )
+
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -225,6 +238,12 @@ def main(argv: list[str] | None = None) -> None:
             asyncio.run(_serve(args.host, args.port, mcp=args.mcp))
         except KeyboardInterrupt:
             pass
+    elif args.command == "guide":
+        import json
+
+        from pytheum.mcp.guide import agent_guide
+
+        print(json.dumps(agent_guide(), indent=2))
     else:
         parser.print_help()
         sys.exit(1)
