@@ -22,6 +22,7 @@ _TOOL_GROUPS: list[dict[str, Any]] = [
         "group": "health",
         "tools": [
             {"name": "t_status", "use": "Service health + dataset freshness. Call FIRST."},
+            {"name": "t_quality", "use": "Dataset quality/integrity: fungible-vs-judged tier split, enforced invariants, honest precision posture."},
             {"name": "t_guide", "use": "This playbook."},
         ],
     },

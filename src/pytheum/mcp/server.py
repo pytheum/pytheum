@@ -50,6 +50,7 @@ from pytheum.mcp.tools import (
     related_markets,
     screen_markets,
     search_markets,
+    service_quality,
     service_status,
     trader_profile,
     whale_trades,
@@ -285,6 +286,13 @@ async def t_market_holders(market_ref: str) -> dict:
 async def t_whale_trades(min_usd: float = 500, limit: int = 50, market_ref: str | None = None) -> dict:
     """Large-notional Polymarket trades where notional_usd (size * price) >= min_usd. Live venue fetch, coalesced+cached 30 s. market_ref (optional, 'polymarket:…') filters to one market. Returns {trades: [{ts, market, price, size, notional_usd, side, wallet, pseudonym?}], count, min_usd, venue, source}. Polymarket-only: Kalshi trades are anonymized. On any venue error returns source:"unavailable"."""
     return await whale_trades(min_usd=min_usd, limit=limit, market_ref=market_ref, base_url=DEFAULT_BASE)
+
+
+@mcp.tool()
+@enveloped
+async def t_quality() -> dict:
+    """Dataset quality + integrity transparency — keyless, no auth. The "verify before you pay" artifact, all DERIVED from the shipped equivalence dataset (no asserted numbers). Returns: `pairs_total` + `dataset_version`; `tiers` (fungible = deterministic/structural/human-reviewed settlement-verified vs judged = LLM-adjudicated, each with pairs + pct); `by_method` / `by_bet_type` composition + `bet_types_total`; `integrity` (the build-time invariants enforced before the dataset ships — 1:1, single-slice-per-id, line-invariant, abbrev/name-alignment, same-city); and `precision` (per-tier posture; `audited_pct` is null on purpose — a labeled-sample precision %% is published separately, not asserted here). Use to show a buyer/agent exactly how much of the gold set is structurally-guaranteed vs LLM-judged before trusting a pair."""
+    return await service_quality(base_url=DEFAULT_BASE)
 
 
 @mcp.tool()
