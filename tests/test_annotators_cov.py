@@ -203,8 +203,22 @@ async def test_cross_venue_attaches_twin() -> None:
     rows = [{"id": "a"}, {"id": "b"}]
     twin = {"market_id": "polymarket:1", "method": "structured_key", "confidence": 1.0}
     await attach_cross_venue(rows, dao=_TwinsDao({"a": twin}))
-    assert rows[0]["cross_venue"] == twin
+    assert rows[0]["cross_venue"]["market_id"] == "polymarket:1"
     assert "cross_venue" not in rows[1]
+
+
+async def test_cross_venue_tags_settlement_fungibility() -> None:
+    """Each twin is flagged fungible (deterministic/structural) vs not (LLM-judged)
+    so an agent knows whether a cross-venue spread is a real lock or needs a rules
+    check (the strict-threshold-vs-touch settlement trap)."""
+    rows = [{"id": "det"}, {"id": "judged"}]
+    twins = {
+        "det": {"market_id": "polymarket:1", "method": "structured_key", "confidence": 1.0},
+        "judged": {"market_id": "polymarket:2", "method": "opus_backstop", "confidence": 0.9},
+    }
+    await attach_cross_venue(rows, dao=_TwinsDao(twins))
+    assert rows[0]["cross_venue"]["fungible"] is True   # deterministic/structural
+    assert rows[1]["cross_venue"]["fungible"] is False  # LLM-judged → confirm rules
 
 
 # --------------------------------------------------------------------------- #

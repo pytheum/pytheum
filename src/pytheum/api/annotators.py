@@ -7,6 +7,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from pytheum.equivalence.index import is_fungible_method
+
 # Quote-staleness: a "parked wall" = a quote frozen for a long time behind a tight
 # spread on a still-active market — a resting limit order, not a live price. Shared
 # by /screen (id-keyed rows) and /context sibling_markets (market_id-keyed) so an
@@ -92,6 +94,11 @@ async def attach_cross_venue(
     for r in rows:
         twin = twins.get(r.get(id_key))
         if twin:
+            # Settlement fungibility inline: True = deterministic/structural/human-
+            # reviewed equivalence (a real locked-arb pair); False = LLM-judged —
+            # confirm rules before treating the spread as a lock (guards the
+            # strict-threshold-vs-touch class of settlement trap).
+            twin["fungible"] = is_fungible_method(twin.get("method"))
             r["cross_venue"] = twin
 
 
