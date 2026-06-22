@@ -100,7 +100,9 @@ async def handle_market_whale_trades(
             return await resolve_pm(body_str, gamma=pm_client.gamma)
 
         try:
-            resolved: PmResolved = await _cache.get_or_fetch(resolve_key, _TTL_RESOLVE, _resolve)
+            resolved: PmResolved = await _cache.get_or_fetch(
+                resolve_key, _TTL_RESOLVE, _resolve, venue="polymarket"
+            )
             condition_id = resolved.condition_id
         except Exception as exc:
             logger.warning("pm resolve failed for whale-trades ref=%s: %s", ref_norm, exc)
@@ -128,7 +130,9 @@ async def handle_market_whale_trades(
         return out
 
     try:
-        result = await _cache.get_or_fetch(cache_key, _TTL_WHALE, _fetch)
+        result = await _cache.get_or_fetch(
+            cache_key, _TTL_WHALE, _fetch, venue="polymarket"
+        )
     except Exception as exc:
         logger.warning("pm whale trades fetch failed min_usd=%s: %s", min_usd, exc)
         return _error_response(exc, ref=ref_norm)

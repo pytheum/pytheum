@@ -59,7 +59,9 @@ async def handle_traders_leaderboard(
         return normalize_pm_leaderboard(items, period=period)
 
     try:
-        result = await _cache.get_or_fetch(cache_key, _TTL_LEADERBOARD, _fetch)
+        result = await _cache.get_or_fetch(
+            cache_key, _TTL_LEADERBOARD, _fetch, venue="polymarket"
+        )
     except Exception as exc:
         logger.warning("pm leaderboard fetch failed period=%s: %s", period, exc)
         return _error_response(exc)

@@ -104,6 +104,7 @@ def _print_banner(
 
 async def _serve(host: str, port: int, *, mcp: bool) -> None:
     from pytheum.api import register_all
+    from pytheum.api.gate import maybe_wrap
     from pytheum.equivalence.index import get_index as get_eq_index
     from pytheum.registry import RouterRegistry
     from pytheum.related.index import get_index as get_rel_index
@@ -116,7 +117,10 @@ async def _serve(host: str, port: int, *, mcp: bool) -> None:
     registry = RouterRegistry()
     register_all(registry, dao=None, equivalence=eq_idx, related=rel_idx, clients=None)
     router = registry.build_router()
-    app = RouterApp(router)
+    # Wrap the router in the auth/rate-limit edge gate.  When both
+    # PYTHEUM_REQUIRE_API_KEY and PYTHEUM_RATE_LIMIT_PER_MIN are at their OFF
+    # defaults this returns the RouterApp unchanged (zero-cost pass-through).
+    app = maybe_wrap(RouterApp(router))
 
     mcp_url: str | None = None
     mcp_task: asyncio.Task[None] | None = None

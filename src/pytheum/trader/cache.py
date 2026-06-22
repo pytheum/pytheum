@@ -22,6 +22,8 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
+from pytheum.trader.metrics import get_metrics
+
 __all__ = ["SingleFlightCache", "_TTL_BOOK", "_TTL_TRADES", "_TTL_OI"]
 
 _TTL_BOOK: float = 2.0
@@ -50,12 +52,24 @@ class SingleFlightCache:
         key: Any,
         ttl: float,
         make_coro: Callable[[], Awaitable[T]],
+        *,
+        venue: str | None = None,
     ) -> T:
         """Return cached result or fetch exactly once per key at a time.
 
         `make_coro` is called at most once per cache-miss window (the factory is
         only invoked by the *first* caller; concurrent callers join its Future).
+
+        When *venue* is given (``"kalshi"`` / ``"polymarket"``) every call is
+        recorded into the process-global venue-call counters
+        (:mod:`pytheum.trader.metrics`) as a cache hit, a coalesced join, or a
+        fresh upstream call — making coalescing measurable via ``/v1/metrics``.
+        Pass ``None`` (the default) to skip metrics entirely.
         """
+        metrics = get_metrics() if venue is not None else None
+        if metrics is not None and venue is not None:
+            metrics.record_request(venue)
+
         loop = asyncio.get_running_loop()
         now = loop.time()
 
@@ -63,12 +77,16 @@ class SingleFlightCache:
         entry = self._cache.get(key)
         if entry is not None and now < entry[1]:
             self._cache.move_to_end(key)
+            if metrics is not None and venue is not None:
+                metrics.record_hit(venue)
             return entry[0]  # type: ignore[no-any-return]
 
         # ── 2. Already in-flight — join it (no yield before this check, so
         #       no race condition with step 3 below) ─────────────────────────
         existing = self._in_flight.get(key)
         if existing is not None:
+            if metrics is not None and venue is not None:
+                metrics.record_coalesced(venue)
             return await existing  # type: ignore[no-any-return]
 
         # ── 3. We are the initiator — register Future BEFORE any yield ──────
@@ -76,6 +94,8 @@ class SingleFlightCache:
         self._in_flight[key] = fut
 
         try:
+            if metrics is not None and venue is not None:
+                metrics.record_upstream_call(venue)
             result = await make_coro()
             # Cache the result
             self._cache[key] = (result, loop.time() + ttl)
@@ -86,6 +106,8 @@ class SingleFlightCache:
                 fut.set_result(result)
         except BaseException as exc:
             # Propagate exception to all waiters, then clear so next call retries.
+            if metrics is not None and venue is not None:
+                metrics.record_error(venue)
             if not fut.done():
                 fut.set_exception(exc)
             raise

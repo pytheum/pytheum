@@ -161,6 +161,50 @@ class ServeConfig(BaseSettings):
     )
 
     # ------------------------------------------------------------------ #
+    # API auth + per-client rate limiting (pre-public-launch gate)
+    # ------------------------------------------------------------------ #
+
+    require_api_key: bool = Field(
+        default=False,
+        validation_alias="PYTHEUM_REQUIRE_API_KEY",
+        description=(
+            "When true, the HTTP API enforces a valid API key on every route "
+            "except the keyless allowlist (/v1/status, /healthz, /llms.txt) and "
+            "OPTIONS preflight.  OFF by default so the current deploy is "
+            "unaffected (PYTHEUM_REQUIRE_API_KEY)."
+        ),
+    )
+    api_keys: str = Field(
+        default="",
+        validation_alias="PYTHEUM_API_KEYS",
+        description=(
+            "Comma-separated set of accepted API keys, supplied by clients via "
+            "the X-API-Key header or 'Authorization: Bearer <key>'.  When empty "
+            "while PYTHEUM_REQUIRE_API_KEY is true the gate fails closed — every "
+            "non-keyless request is rejected (PYTHEUM_API_KEYS)."
+        ),
+    )
+    rate_limit_per_min: int = Field(
+        default=0,
+        validation_alias="PYTHEUM_RATE_LIMIT_PER_MIN",
+        description=(
+            "Sustained per-client request rate (requests/minute) for the HTTP "
+            "API token-bucket limiter.  Client identity = API key when present, "
+            "else source IP.  0 (the default) disables rate limiting so the "
+            "current deploy is unaffected; 120 is a sensible enabled value "
+            "(PYTHEUM_RATE_LIMIT_PER_MIN)."
+        ),
+    )
+    rate_limit_burst: int = Field(
+        default=120,
+        validation_alias="PYTHEUM_RATE_LIMIT_BURST",
+        description=(
+            "Burst allowance (token-bucket size) for the HTTP API rate limiter "
+            "(PYTHEUM_RATE_LIMIT_BURST)."
+        ),
+    )
+
+    # ------------------------------------------------------------------ #
     # HTTP server
     # ------------------------------------------------------------------ #
 

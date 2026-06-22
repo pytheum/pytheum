@@ -78,7 +78,9 @@ async def handle_market_book(
             return normalize_kalshi_book(raw_body, ref=ref_norm, depth=depth)
 
         try:
-            result = await _cache.get_or_fetch(cache_key, _TTL_BOOK, _fetch_kalshi)
+            result = await _cache.get_or_fetch(
+                cache_key, _TTL_BOOK, _fetch_kalshi, venue="kalshi"
+            )
         except Exception as exc:
             logger.warning("kalshi book fetch failed ref=%s: %s", ref_norm, exc)
             return _error_response(ref_norm, "kalshi", exc)
@@ -96,7 +98,9 @@ async def handle_market_book(
             return await resolve_pm(body, gamma=pm_client.gamma)
 
         try:
-            resolved: PmResolved = await _cache.get_or_fetch(resolve_key, _TTL_RESOLVE, _resolve)
+            resolved: PmResolved = await _cache.get_or_fetch(
+                resolve_key, _TTL_RESOLVE, _resolve, venue="polymarket"
+            )
         except Exception as exc:
             logger.warning("pm token resolve failed ref=%s: %s", ref_norm, exc)
             return _error_response(ref_norm, "polymarket", exc)
@@ -106,7 +110,9 @@ async def handle_market_book(
             return normalize_pm_book(raw_body, ref=ref_norm, depth=depth)
 
         try:
-            result = await _cache.get_or_fetch(cache_key, _TTL_BOOK, _fetch_pm)
+            result = await _cache.get_or_fetch(
+                cache_key, _TTL_BOOK, _fetch_pm, venue="polymarket"
+            )
         except Exception as exc:
             logger.warning("pm book fetch failed ref=%s: %s", ref_norm, exc)
             return _error_response(ref_norm, "polymarket", exc)
