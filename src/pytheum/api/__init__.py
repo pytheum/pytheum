@@ -35,6 +35,7 @@ from pytheum.api.markets_search import handle_markets_search
 from pytheum.api.markets_trades import handle_market_trades
 from pytheum.api.markets_whale_trades import handle_market_whale_trades
 from pytheum.api.metrics import handle_metrics
+from pytheum.api.quality import handle_quality
 from pytheum.api.status import handle_status
 from pytheum.api.traders_leaderboard import handle_traders_leaderboard
 from pytheum.api.traders_profile import handle_trader_profile
@@ -56,6 +57,9 @@ def register_group_A(
 
     async def _status(query: dict[str, str]) -> tuple[int, dict[str, Any]]:
         return await handle_status(query, dao=dao, equivalence=equivalence, related=related)
+
+    async def _quality(query: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        return await handle_quality(query, equivalence=equivalence)
 
     async def _metrics(query: dict[str, str]) -> tuple[int, dict[str, Any]]:
         return await handle_metrics(query)
@@ -81,6 +85,15 @@ def register_group_A(
     registry.add(RouteSpec(
         "GET", "/v1/status", _status,
         summary="Service health check and dataset summary — keyless.",
+        tags=["meta"],
+    ))
+    registry.add(RouteSpec(
+        "GET", "/v1/quality", _quality,
+        summary=(
+            "Dataset quality + integrity transparency — keyless. Deterministic-vs-"
+            "judged tier split, method/bet-type composition, enforced build-time "
+            "integrity invariants, and an honest precision posture."
+        ),
         tags=["meta"],
     ))
     registry.add(RouteSpec(

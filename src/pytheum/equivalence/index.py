@@ -12,6 +12,7 @@ import importlib.resources
 import json
 import logging
 import os
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
@@ -262,6 +263,47 @@ class EquivalenceIndex:
             if bt:
                 seen.add(str(bt))
         return sorted(seen)
+
+    def quality_stats(self) -> dict[str, Any]:
+        """Tiered quality posture of the loaded dataset, computed in one pass.
+
+        Splits pairs into the deterministic/structural/human-reviewed tier
+        (settlement-verified, via is_fungible_method) vs the LLM-judged tier,
+        and tallies methods + bet types. The transparency artifact behind
+        /v1/quality + t_quality — every number is DERIVED from the shipped
+        dataset, never asserted."""
+        total = len(self._rows)
+        methods: Counter[str] = Counter()
+        bet_types: Counter[str] = Counter()
+        fungible = 0
+        for row in self._rows:
+            method = row.get("method")
+            methods[method or "unknown"] += 1
+            bet_types[str(row.get("bet_type") or "unknown")] += 1
+            if is_fungible_method(method):
+                fungible += 1
+        judged = total - fungible
+
+        def _pct(n: int) -> float:
+            return round(100.0 * n / total, 1) if total else 0.0
+
+        return {
+            "pairs_total": total,
+            "dataset_version": self.dataset_version,
+            "tiers": {
+                "fungible": {
+                    "pairs": fungible, "pct": _pct(fungible),
+                    "note": "deterministic / structural / human-reviewed — settlement-verified equivalence",
+                },
+                "judged": {
+                    "pairs": judged, "pct": _pct(judged),
+                    "note": "LLM-adjudicated — high precision but confirm rules before treating as a fungible lock",
+                },
+            },
+            "by_method": dict(methods.most_common(15)),
+            "by_bet_type": dict(bet_types.most_common(25)),
+            "bet_types_total": len(bet_types),
+        }
 
     def browse(
         self,
