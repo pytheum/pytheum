@@ -156,3 +156,27 @@ async def test_handler_truncates_to_limit():
     assert body["meta"]["limit"] == 5
     # candidates_hydrated reflects the over-fetch (> page size).
     assert body["meta"]["candidates_hydrated"] >= 5
+
+
+@pytest.mark.asyncio
+async def test_handler_small_limit_scans_past_unhydratable_front():
+    """A small `limit` must not blank out when the soonest-resolving front is a
+    cluster of pairs whose markets aren't in the ingest table (legs don't
+    hydrate). The candidate floor scans deep enough to reach the live ones."""
+    _cache.clear()
+    # 60 live-by-date pairs whose legs are NOT in the DAO store (un-ingested),
+    # then 10 live pairs that DO hydrate. limit=2 => limit*factor=8 < the 60-row
+    # dead-but-not-stale front; only the _MIN_CANDIDATES floor reaches the live tail.
+    ghost = [_row(i, days=+9) for i in range(60)]
+    live = [_row(5000 + i, days=+9) for i in range(10)]
+    idx = _make_index(ghost + live)
+    # DAO only knows the `live` ids — ghost legs return nothing (a is None).
+    res_at = {r["pm_ref"]: r["resolution_date"] for r in live}
+    res_at.update({r["kalshi_ref"]: r["resolution_date"] for r in live})
+    dao = _HydratingDao(res_at)
+
+    _, body = await handle_markets_equivalents(
+        {"limit": "2"}, dao=dao, equivalence=idx, force_refresh=True,
+    )
+    assert body["count"] == 2, "small limit must scan past the un-ingested front"
+    assert body["meta"]["candidates_hydrated"] >= 60  # floor pulled the whole tail in
