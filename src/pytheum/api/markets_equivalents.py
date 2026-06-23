@@ -48,6 +48,14 @@ MAX_LIMIT = 200
 _SCAN_BUDGET_ROWS = 3000
 _OVERFETCH_FACTOR = 4
 _MAX_CANDIDATES = 300
+# Floor on the hydration set regardless of `limit`.  Many export pairs reference
+# markets not (yet) in the ingest table — the soonest-resolving front can be a
+# whole cluster of un-ingested markets (e.g. a freshly-wired matcher's class),
+# so a small `limit` (=> small limit*factor) could hydrate only that dead
+# cluster and return an empty page even though live, hydratable pairs sit just
+# deeper.  Hydrating at least this many candidates (2 cheap batch queries) keeps
+# small-limit calls robust to an un-ingested front.
+_MIN_CANDIDATES = 150
 
 # The pairs join (136k equivalence rows x markets) plus the 300-id staleness
 # window run ~20s on the shared-compute DB — past the MCP transport's patience
@@ -201,7 +209,7 @@ async def handle_markets_equivalents(
     # its front resolves day-over-day, and book-level staleness drops more — so
     # we scan/hydrate a multiple of the page and truncate to `limit` LIVE pairs
     # below.  Without this, an aged export returns an empty page (the bug).
-    candidate_cap = min(max(limit * _OVERFETCH_FACTOR, limit), _MAX_CANDIDATES)
+    candidate_cap = min(max(limit * _OVERFETCH_FACTOR, _MIN_CANDIDATES), _MAX_CANDIDATES)
     if equivalence is not None:
         pairs = _index_rows_to_pairs(equivalence._rows, limit=candidate_cap,
                                      fungible_only=fungible_only)
