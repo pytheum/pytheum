@@ -302,6 +302,29 @@ async def test_handler_leagues_available_in_meta():
 
 
 @pytest.mark.asyncio
+async def test_handler_echoes_ignored_sort_by():
+    """An unknown sort_by silently falls back to volume; meta must echo what was
+    requested so an agent that typo'd isn't misled into trusting a volume sort."""
+    dao = _SimpleDao()
+    idx = _make_index()
+    _, body = await handle_markets_matched({"sort_by": "arbitrage"}, dao=dao, equivalence=idx)
+    filt = body["meta"]["filter"]
+    assert filt["sort_by"] == "volume"  # applied fallback
+    assert filt["sort_by_requested"] == "arbitrage"  # honesty signal
+
+
+@pytest.mark.asyncio
+async def test_handler_no_sort_by_requested_when_valid():
+    """A valid sort_by must NOT add the sort_by_requested echo."""
+    dao = _SimpleDao()
+    idx = _make_index()
+    _, body = await handle_markets_matched({"sort_by": "spread"}, dao=dao, equivalence=idx)
+    filt = body["meta"]["filter"]
+    assert filt["sort_by"] == "spread"
+    assert "sort_by_requested" not in filt
+
+
+@pytest.mark.asyncio
 async def test_handler_leagues_available_absent_for_no_league_data():
     """If no rows have a league field, leagues_available must not appear."""
     dao = _SimpleDao()

@@ -378,6 +378,12 @@ async def handle_markets_matched(
         filter_block["league"] = league_filter
     if date_filter is not None:
         filter_block["date"] = date_filter
+    # Surface a silently-ignored sort_by: an unknown value falls back to "volume",
+    # so echo what was requested when it differs from what was applied — an agent
+    # that typo'd e.g. "arbitrage" shouldn't be misled into trusting a volume sort.
+    requested_sort = (query.get("sort_by") or "").strip().lower()
+    if requested_sort and requested_sort != sort_by:
+        filter_block["sort_by_requested"] = requested_sort
 
     meta: dict[str, Any] = {
         "pairs_loaded": equivalence.pairs_loaded,
