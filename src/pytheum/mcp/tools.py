@@ -1376,13 +1376,31 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
         if p.get("bet_type") not in ("event",) and edge > 0.15:
             suspect_excluded += 1
             continue
-        lock_days = _lock_days(a.get("days_to_resolution"), b.get("days_to_resolution"))
+        # Resolution-date integrity: Polymarket's endDate is a known-unreliable
+        # placeholder on some markets (verified via gamma: NBA-draft PM legs carry
+        # 2026-06-24 vs the real 2026-07-07 draft date Kalshi has), which would
+        # poison the capital-efficiency horizon. Kalshi's resolution_at is the
+        # reliable point-in-time source, so when a verified-equivalent pair's legs
+        # disagree by >1 day we flag it and annualize over the KALSHI horizon
+        # rather than the (often shorter) placeholder.
+        k_leg = a if a.get("venue") == "kalshi" else b
+        p_leg = b if k_leg is a else a
+        kd, pd_ = k_leg.get("days_to_resolution"), p_leg.get("days_to_resolution")
+        resolution_mismatch = bool(
+            isinstance(kd, (int, float)) and isinstance(pd_, (int, float))
+            and kd > 0 and pd_ > 0 and abs(kd - pd_) > 1.0)
+        lock_days = (kd if (resolution_mismatch and isinstance(kd, (int, float)) and kd > 0)
+                     else _lock_days(kd, pd_))
         row: dict[str, Any] = {
             "net_edge": edge,
             # capital efficiency: annualize over the binding (later) leg so a
             # tiny near-term lock outranks a bigger one tied up for years (#4).
             "annualized_net_edge": _annualized_edge(edge, lock_days),
             "lock_days": lock_days,
+            # True when the legs' resolution dates disagree >1d — a data-quality
+            # signal (usually a PM placeholder); annualized_net_edge above is then
+            # computed over the trusted Kalshi horizon, not the placeholder.
+            "resolution_mismatch": resolution_mismatch,
             "matched_by": p.get("method"),
             "match_confidence": p.get("confidence"),
             "bet_type": p.get("bet_type"),
