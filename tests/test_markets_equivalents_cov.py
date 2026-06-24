@@ -170,7 +170,12 @@ async def test_collection_include_rules_and_fungible() -> None:
     store = {
         "kalshi:A": _market("kalshi:A", "kalshi", prices="[0.5,0.5]",
                             payload={"outcomePrices": "[0.5,0.5]",
-                                     "rulesPrimary": "Resolves YES if X."}),
+                                     "rulesPrimary": "Resolves YES if X.",
+                                     # two-sided book so the live one-sided drop
+                                     # (shipped after this test) doesn't remove
+                                     # the pair for an unrelated reason; this test
+                                     # exercises fungible_only + include_rules.
+                                     "bestBid": "0.40", "bestAsk": "0.60"}),
         "polymarket:1": _market("polymarket:1", "polymarket", prices="[0.5,0.5]"),
     }
     _, body = await handle_markets_equivalents(
