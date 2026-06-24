@@ -112,9 +112,11 @@ def kalshi_row_to_market(market_id: str, title: str | None, status: str | None,
     )
 
 
-def _load_source_rows(source_db: str, tickers: set[str]) -> dict[str, tuple[Any, ...]]:
+def _load_source_rows(source_db: str, tickers: set[str],
+                      min_date: str | None) -> dict[str, tuple[Any, ...]]:
     """Return {serving_id: market_row_tuple} for the requested tickers found in the
-    matcher SQLite DB. serving_id = kalshi:<ticker>."""
+    matcher SQLite DB. serving_id = kalshi:<ticker>. ``min_date`` skips rows whose
+    close_date is before it (live-only scope)."""
     con = sqlite3.connect(source_db)
     out: dict[str, tuple[Any, ...]] = {}
     bare = {t.split(":", 1)[1] if t.startswith("kalshi:") else t for t in tickers}
@@ -123,6 +125,8 @@ def _load_source_rows(source_db: str, tickers: set[str]) -> dict[str, tuple[Any,
     for tk in bare:
         r = con.execute(q, (tk,)).fetchone()
         if r is None:
+            continue
+        if min_date and (r[3] or "")[:10] < min_date:  # r[3] = close_date
             continue
         row = kalshi_row_to_market(*r)
         if row is not None:
@@ -151,8 +155,13 @@ def export_row_to_market(kalshi_ref: str | None, kalshi_title: str | None,
     )
 
 
-def _load_export_rows(export_path: str, ids: set[str], today: str) -> dict[str, tuple[Any, ...]]:
-    """Return {serving_id: row} for the missing ids found in the equivalence export."""
+def _load_export_rows(export_path: str, ids: set[str], today: str,
+                      min_date: str | None) -> dict[str, tuple[Any, ...]]:
+    """Return {serving_id: row} for the missing ids found in the equivalence export.
+
+    When ``min_date`` is set, rows whose resolution_date is before it are skipped — the
+    live-only scope (~97% of missing legs are historical/closed and pointless to backfill).
+    """
     out: dict[str, tuple[Any, ...]] = {}
     want = set(ids)
     with gzip.open(export_path, "rt", encoding="utf-8") as fh:
@@ -162,16 +171,19 @@ def _load_export_rows(export_path: str, ids: set[str], today: str) -> dict[str, 
                 continue
             r = json.loads(line)
             ref = r.get("kalshi_ref")
-            if ref in want:
-                row = export_row_to_market(ref, r.get("kalshi_title"),
-                                           r.get("resolution_date"), today)
-                if row is not None:
-                    out[ref] = row
+            if ref not in want:
+                continue
+            if min_date and (r.get("resolution_date") or "")[:10] < min_date:
+                continue
+            row = export_row_to_market(ref, r.get("kalshi_title"),
+                                       r.get("resolution_date"), today)
+            if row is not None:
+                out[ref] = row
     return out
 
 
 async def run(*, source_db: str | None, from_export: str | None, today: str,
-              write: bool, limit: int | None) -> None:
+              min_resolution_date: str | None, write: bool, limit: int | None) -> None:
     import asyncpg
 
     from scripts.load_market_equivalence import _db_url
@@ -180,30 +192,30 @@ async def run(*, source_db: str | None, from_export: str | None, today: str,
         await con.execute("SET statement_timeout = 0")
         q = _MISSING_QUERY + (f" LIMIT {int(limit)}" if limit else "")
         missing = [r["kalshi_market_id"] for r in await con.fetch(q)]
-        print(f"missing Kalshi legs in serving markets table: {len(missing)}")
+        scope = (f"live-only (resolution_date >= {min_resolution_date})"
+                 if min_resolution_date else "ALL (incl. historical/closed)")
+        print(f"missing Kalshi legs in serving markets table: {len(missing)}  | scope: {scope}")
         if not missing:
             print("nothing to do — every equivalence pair's Kalshi leg is present.")
             return
 
         if from_export:
-            rows_by_id = _load_export_rows(from_export, set(missing), today)
+            rows_by_id = _load_export_rows(from_export, set(missing), today, min_resolution_date)
             src_label = "export"
         else:
             assert source_db is not None  # main() requires exactly one source
-            rows_by_id = _load_source_rows(source_db, set(missing))
+            rows_by_id = _load_source_rows(source_db, set(missing), min_resolution_date)
             src_label = "matcher DB"
         found = [rows_by_id[m] for m in missing if m in rows_by_id]
-        not_in_source = [m for m in missing if m not in rows_by_id]
-        print(f"resolved from {src_label}: {len(found)} | "
-              f"not in {src_label} (skipped): {len(not_in_source)}")
+        skipped = len(missing) - len(found)
+        print(f"in-scope rows from {src_label}: {len(found)}  | "
+              f"out-of-scope/not-in-source (skipped): {skipped}")
         for sample in found[:5]:
             print(f"  would-upsert: {sample[0]}  status={sample[2]}  "
                   f"resolves={sample[6]}  title={str(sample[1])[:40]!r}")
-        if not_in_source[:5]:
-            print(f"  not-in-source sample: {not_in_source[:5]}")
 
         if not write:
-            print(f"\nDRY-RUN: would upsert {len(found)} Kalshi rows. "
+            print(f"\nDRY-RUN: would upsert {len(found)} Kalshi rows ({scope}). "
                   f"Re-run with --write to apply.")
             return
 
@@ -228,12 +240,20 @@ def main() -> None:
                      help="matcher SQLite markets DB (laptop-side source; richer rows).")
     ap.add_argument("--today", default=_dt.date.today().isoformat(),
                     help="Reference date for active/closed status from resolution_date.")
+    ap.add_argument("--live-only", action="store_true",
+                    help="Only upsert legs whose resolution_date >= --today (the live "
+                         "coverage lift; ~97%% of missing legs are historical/closed and "
+                         "pointless to backfill). Shorthand for --min-resolution-date=today.")
+    ap.add_argument("--min-resolution-date", default=None,
+                    help="Only upsert legs resolving on/after this YYYY-MM-DD.")
     ap.add_argument("--write", action="store_true",
                     help="Actually upsert. Omitted = DRY-RUN (count + sample only).")
     ap.add_argument("--limit", type=int, default=None)
     args = ap.parse_args()
+    min_date = args.min_resolution_date or (args.today if args.live_only else None)
     asyncio.run(run(source_db=args.source_db, from_export=args.from_export,
-                    today=args.today, write=args.write, limit=args.limit))
+                    today=args.today, min_resolution_date=min_date,
+                    write=args.write, limit=args.limit))
 
 
 if __name__ == "__main__":
