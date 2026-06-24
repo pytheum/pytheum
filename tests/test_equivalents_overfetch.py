@@ -43,12 +43,20 @@ def _row(n: int, *, days: float) -> dict:
     }
 
 
+_BOOK_PAYLOAD = '{"bestBid": 0.45, "bestAsk": 0.55}'  # → two-sided book via book_from_payload
+
+
 class _HydratingDao:
     """fetch_markets_by_ids returns a market row per id; is_stale is derived
-    by the handler from resolution_at (matching the export's resolution_date)."""
+    by the handler from resolution_at (matching the export's resolution_date).
 
-    def __init__(self, res_at: dict[str, str]) -> None:
+    By default every leg carries a two-sided book. ``no_book`` is a set of ids
+    that hydrate WITHOUT a book (one-sided/price-blind) so the handler's
+    one-sided skip can be exercised."""
+
+    def __init__(self, res_at: dict[str, str], no_book: set[str] | None = None) -> None:
         self._res_at = res_at  # id -> iso resolution_at
+        self._no_book = no_book or set()
 
     async def fetch_markets_by_ids(self, ids: list[str]) -> list[dict]:
         out = []
@@ -60,7 +68,7 @@ class _HydratingDao:
                 "status": "active",
                 "volume_usd": 1_000_000.0,
                 "resolution_at": self._res_at.get(i),
-                "payload": None,
+                "payload": None if i in self._no_book else _BOOK_PAYLOAD,
             })
         return out
 
@@ -180,3 +188,32 @@ async def test_handler_small_limit_scans_past_unhydratable_front():
     )
     assert body["count"] == 2, "small limit must scan past the un-ingested front"
     assert body["meta"]["candidates_hydrated"] >= 60  # floor pulled the whole tail in
+
+
+@pytest.mark.asyncio
+async def test_handler_skips_one_sided_pairs():
+    """A soonest-front cluster of pairs whose legs hydrate but lack a two-sided
+    book (one venue not quoting) must be skipped — not crowd out the complete
+    both-priced pairs deeper. (The real-world KXATPGTOTAL case: live Kalshi leg,
+    bookless PM twin.)"""
+    _cache.clear()
+    # 40 front pairs that hydrate but whose PM leg has NO book → one-sided.
+    one_sided = [_row(i, days=+9) for i in range(40)]
+    # 6 fully-complete pairs deeper (both legs booked).
+    complete = [_row(7000 + i, days=+9) for i in range(6)]
+    idx = _make_index(one_sided + complete)
+    res_at = {r["pm_ref"]: r["resolution_date"] for r in one_sided + complete}
+    res_at.update({r["kalshi_ref"]: r["resolution_date"] for r in one_sided + complete})
+    no_book = {r["pm_ref"] for r in one_sided}  # PM leg of every front pair is bookless
+    dao = _HydratingDao(res_at, no_book=no_book)
+
+    _, body = await handle_markets_equivalents(
+        {"limit": "5"}, dao=dao, equivalence=idx, force_refresh=True,
+    )
+    assert body["count"] == 5, "must scan past one-sided front to the complete pairs"
+    assert body["meta"]["dropped_one_sided"] >= 40
+    # every returned pair has a two-sided book on BOTH legs
+    for p in body["pairs"]:
+        for leg in (p["a"], p["b"]):
+            assert leg["book"] and leg["book"].get("bid") is not None \
+                and leg["book"].get("ask") is not None
