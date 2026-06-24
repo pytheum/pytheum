@@ -135,23 +135,34 @@ def _load_source_rows(source_db: str, tickers: set[str],
     return out
 
 
+def _effective_date(game_date: str | None, resolution_date: str | None) -> str | None:
+    """The pair's true event/liveness date. For sports, game_date is authoritative:
+    Kalshi's close_time can lag the actual match by weeks (KXATPGTOTAL-26JUN22 has
+    game_date 2026-06-22 but Kalshi close 2026-07-06), so a past game looks 'live' by
+    resolution_date and gets paired with an already-closed/unquotable PM leg. Prefer
+    game_date when present, else fall back to resolution_date (events have no game_date)."""
+    return game_date or resolution_date
+
+
 def export_row_to_market(kalshi_ref: str | None, kalshi_title: str | None,
-                         resolution_date: str | None, today: str) -> tuple[Any, ...] | None:
+                         game_date: str | None, resolution_date: str | None,
+                         today: str) -> tuple[Any, ...] | None:
     """Build a minimal serving markets row from an equivalence-export row.
 
     Box-side source — needs no matcher DB or Kalshi API. Identity only: the box
     price-refresh sidecar + market_metadata poll fill the book and the venue-precise
-    resolution_at once the row exists. resolution_date (the pair's binding close) is the
-    seed; status is derived from it vs ``today`` (the box's sweep_settled reconciles).
+    resolution_at once the row exists. The effective event date (game_date else
+    resolution_date) seeds resolution_at + status (the box's sweep_settled reconciles).
     """
     if not kalshi_ref or not kalshi_ref.startswith("kalshi:"):
         return None
-    rd = (resolution_date or "")[:10]
-    status = "closed" if (rd and rd < today) else "active"
+    eff = _effective_date(game_date, resolution_date)
+    d = (eff or "")[:10]
+    status = "closed" if (d and d < today) else "active"
     payload = {"synced_by": "kalshi_supplemental", "source": "export"}
     return (
         kalshi_ref, kalshi_title, status, None, None, None,
-        _iso(resolution_date), json.dumps(payload),
+        _iso(eff), json.dumps(payload),
     )
 
 
@@ -159,8 +170,10 @@ def _load_export_rows(export_path: str, ids: set[str], today: str,
                       min_date: str | None) -> dict[str, tuple[Any, ...]]:
     """Return {serving_id: row} for the missing ids found in the equivalence export.
 
-    When ``min_date`` is set, rows whose resolution_date is before it are skipped — the
-    live-only scope (~97% of missing legs are historical/closed and pointless to backfill).
+    When ``min_date`` is set, rows whose EFFECTIVE date (game_date else resolution_date)
+    is before it — or that have no date at all — are skipped. Filtering on game_date is
+    the fix for the past-game one-sided-pair regression (Kalshi's close_time lags the
+    event, so resolution_date alone admitted resolved matches with closed PM legs).
     """
     out: dict[str, tuple[Any, ...]] = {}
     want = set(ids)
@@ -173,9 +186,11 @@ def _load_export_rows(export_path: str, ids: set[str], today: str,
             ref = r.get("kalshi_ref")
             if ref not in want:
                 continue
-            if min_date and (r.get("resolution_date") or "")[:10] < min_date:
-                continue
-            row = export_row_to_market(ref, r.get("kalshi_title"),
+            if min_date:
+                eff = (_effective_date(r.get("game_date"), r.get("resolution_date")) or "")[:10]
+                if not eff or eff < min_date:  # undated or past-event → skip in live-only
+                    continue
+            row = export_row_to_market(ref, r.get("kalshi_title"), r.get("game_date"),
                                        r.get("resolution_date"), today)
             if row is not None:
                 out[ref] = row

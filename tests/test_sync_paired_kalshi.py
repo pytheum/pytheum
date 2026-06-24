@@ -57,9 +57,9 @@ def test_empty_ticker_returns_none() -> None:
 
 # --- box-side --from-export source ---
 
-def test_export_row_active_when_resolution_future() -> None:
+def test_export_row_active_when_future() -> None:
     row = export_row_to_market(
-        "kalshi:KXATPGTOTAL-26JUN30X", "Total games over 24.5?", "2026-06-30", "2026-06-23")
+        "kalshi:KXATPGTOTAL-26JUN30X", "Total games over 24.5?", None, "2026-06-30", "2026-06-23")
     assert row is not None
     assert row[0] == "kalshi:KXATPGTOTAL-26JUN30X"  # serving id (already kalshi:…)
     assert row[1] == "Total games over 24.5?"
@@ -70,14 +70,24 @@ def test_export_row_active_when_resolution_future() -> None:
     assert payload["source"] == "export"
 
 
-def test_export_row_closed_when_resolution_past() -> None:
-    row = export_row_to_market("kalshi:KXOLD", "t", "2026-01-01", "2026-06-23")
+def test_export_row_closed_when_past() -> None:
+    row = export_row_to_market("kalshi:KXOLD", "t", None, "2026-01-01", "2026-06-23")
     assert row is not None and row[2] == "closed"
 
 
+def test_export_row_game_date_overrides_lagged_resolution() -> None:
+    # The regression: game_date past (match yesterday) but Kalshi resolution lags 2 weeks.
+    # game_date wins -> closed + resolution_at seeded from game_date, not the lagged date.
+    row = export_row_to_market("kalshi:KXATPGTOTAL-26JUN22X", "t",
+                               "2026-06-22", "2026-07-06", "2026-06-23")
+    assert row is not None
+    assert row[2] == "closed"  # past game, NOT active off the lagged 07-06
+    assert row[6] is not None and row[6].day == 22  # resolution_at = game_date 06-22
+
+
 def test_export_row_rejects_non_kalshi_ref() -> None:
-    assert export_row_to_market("polymarket:123", "t", "2026-06-30", "2026-06-23") is None
-    assert export_row_to_market(None, "t", None, "2026-06-23") is None
+    assert export_row_to_market("polymarket:123", "t", None, "2026-06-30", "2026-06-23") is None
+    assert export_row_to_market(None, "t", None, None, "2026-06-23") is None
 
 
 def test_load_export_rows_filters_to_missing(tmp_path: Path) -> None:
@@ -91,13 +101,19 @@ def test_load_export_rows_filters_to_missing(tmp_path: Path) -> None:
     assert out["kalshi:A"][1] == "TA"
 
 
-def test_load_export_rows_live_only_skips_past_resolution(tmp_path: Path) -> None:
+def test_load_export_rows_live_only_uses_game_date(tmp_path: Path) -> None:
     p = tmp_path / "exp.jsonl.gz"
     with gzip.open(p, "wt", encoding="utf-8") as fh:
-        fh.write(json.dumps({"kalshi_ref": "kalshi:LIVE", "kalshi_title": "live",
-                             "resolution_date": "2026-06-30"}) + "\n")
-        fh.write(json.dumps({"kalshi_ref": "kalshi:OLD", "kalshi_title": "old",
-                             "resolution_date": "2022-01-01"}) + "\n")
-    # min_date = today -> only the future-resolving leg survives (the ~97%-historical skip)
-    out = _load_export_rows(str(p), {"kalshi:LIVE", "kalshi:OLD"}, "2026-06-23", "2026-06-23")
-    assert set(out) == {"kalshi:LIVE"}
+        # LIVE: future game. PASTGAME: the bug — past game_date but lagged future resolution.
+        # EVENT: no game_date, future resolution (events keep resolution_date). UNDATED: skip.
+        fh.write(json.dumps({"kalshi_ref": "kalshi:LIVE", "kalshi_title": "l",
+                             "game_date": "2026-06-30", "resolution_date": "2026-06-30"}) + "\n")
+        fh.write(json.dumps({"kalshi_ref": "kalshi:PASTGAME", "kalshi_title": "p",
+                             "game_date": "2026-06-22", "resolution_date": "2026-07-06"}) + "\n")
+        fh.write(json.dumps({"kalshi_ref": "kalshi:EVENT", "kalshi_title": "e",
+                             "resolution_date": "2026-11-03"}) + "\n")
+        fh.write(json.dumps({"kalshi_ref": "kalshi:UNDATED", "kalshi_title": "u"}) + "\n")
+    out = _load_export_rows(str(p), {"kalshi:LIVE", "kalshi:PASTGAME", "kalshi:EVENT",
+                                     "kalshi:UNDATED"}, "2026-06-23", "2026-06-23")
+    # PASTGAME excluded (game_date past despite lagged resolution); UNDATED excluded.
+    assert set(out) == {"kalshi:LIVE", "kalshi:EVENT"}
