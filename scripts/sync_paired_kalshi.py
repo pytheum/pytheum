@@ -207,9 +207,11 @@ async def run(*, source_db: str | None, from_export: str | None, today: str,
         await con.execute("SET statement_timeout = 0")
         q = _MISSING_QUERY + (f" LIMIT {int(limit)}" if limit else "")
         missing = [r["kalshi_market_id"] for r in await con.fetch(q)]
-        scope = (f"live-only (resolution_date >= {min_resolution_date})"
-                 if min_resolution_date else "ALL (incl. historical/closed)")
+        scope = (f"live-only (effective date [game_date else resolution_date] >= "
+                 f"{min_resolution_date})" if min_resolution_date
+                 else "ALL (incl. historical/closed)")
         print(f"missing Kalshi legs in serving markets table: {len(missing)}  | scope: {scope}")
+        print("[sync_paired_kalshi @ game_date-aware filter]")  # build-marker: confirms #26+ is running
         if not missing:
             print("nothing to do — every equivalence pair's Kalshi leg is present.")
             return
