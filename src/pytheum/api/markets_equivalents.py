@@ -181,6 +181,24 @@ def _parse_bool_param(query: dict[str, str], key: str, *, default: bool) -> bool
     return raw in ("true", "1", "yes")
 
 
+_VALID_STATUSES = ("live", "settled", "all")
+
+
+def _parse_status_param(query: dict[str, str]) -> str | None:
+    """Parse the ``status`` query param (case-insensitive, trimmed).
+
+    Returns the normalised value (``live`` | ``settled`` | ``all``), defaulting
+    to ``live`` when empty/missing.  Returns ``None`` on an unknown value so the
+    handler can surface a 400.
+    """
+    raw = (query.get("status") or "").strip().lower()
+    if not raw:
+        return "live"
+    if raw not in _VALID_STATUSES:
+        return None
+    return raw
+
+
 async def handle_markets_equivalents(
     query: dict[str, str],
     *,
@@ -207,11 +225,28 @@ async def handle_markets_equivalents(
         rules text from the market's payload).  Omitted by default to keep
         collection-endpoint payload size small; the MCP divergence scanner
         opts in to pull rules for each pair.
+    status : str (default "live")
+        Resolution filter for returned pairs.
+          - ``live``    (default) — only tradeable pairs: skip row-stale rows up
+            front, drop pairs whose either hydrated leg is settled (is_stale),
+            and drop one-sided pairs (a leg without a two-sided book).
+          - ``settled`` — only settled pairs (EITHER hydrated leg is_stale).
+            Does NOT skip row-stale rows up front and does NOT drop one-sided
+            pairs (settled legs are commonly one-sided / unquoted); live pairs
+            are dropped instead (counted in ``meta.dropped_live``).
+          - ``all`` — no resolution filter and no one-sided drop; every hydrated
+            pair (both legs present) up to ``limit``.
     """
     limit = parse_limit(query, default=DEFAULT_LIMIT, max_limit=MAX_LIMIT)
     fungible_only = _parse_bool_param(query, "fungible_only", default=False)
     include_rules = _parse_bool_param(query, "include_rules", default=False)
-    cache_key = f"{limit}:{fungible_only}:{include_rules}"
+    status = _parse_status_param(query)
+    if status is None:
+        return 400, {
+            "error": "invalid status; must be one of: "
+                     + ", ".join(_VALID_STATUSES)
+        }
+    cache_key = f"{limit}:{fungible_only}:{include_rules}:{status}"
     hit = _cache.get(cache_key)
     if not force_refresh and hit is not None and time.monotonic() - hit[0] < _CACHE_TTL_S:
         return 200, hit[1]
@@ -231,9 +266,15 @@ async def handle_markets_equivalents(
     # we scan/hydrate a multiple of the page and truncate to `limit` LIVE pairs
     # below.  Without this, an aged export returns an empty page (the bug).
     candidate_cap = min(max(limit * _OVERFETCH_FACTOR, _MIN_CANDIDATES), _MAX_CANDIDATES)
+    # For settled/all the row-stale skip is OFF: settled pairs are exactly the
+    # row-stale front the live path would otherwise skip, so dropping them up
+    # front would starve those modes.  The soonest-first export clusters settled
+    # pairs at the front, so settled still finds them early within the budget.
+    skip_row_stale = status == "live"
     if equivalence is not None:
         pairs = _index_rows_to_pairs(equivalence._rows, limit=candidate_cap,
-                                     fungible_only=fungible_only)
+                                     fungible_only=fungible_only,
+                                     skip_row_stale=skip_row_stale)
     elif dao is not None:
         pairs = await dao.fetch_equivalence_pairs(limit=candidate_cap)
     else:
@@ -251,24 +292,32 @@ async def handle_markets_equivalents(
     out = []
     dropped_stale = 0
     dropped_one_sided = 0
+    dropped_live = 0
     for p in pairs:
         a = legs.get(p["kalshi_market_id"])
         b = legs.get(p["polymarket_market_id"])
         if a is None or b is None:
             continue
-        # Resolution already passed on either leg => the pair is settled, not
-        # tradeable — venues carry resolved game markets as status=active
+        # A pair is "settled" when EITHER hydrated leg's resolution has passed
+        # (is_stale) — venues carry resolved game markets as status=active
         # (#213), and those ghosts (one side parked at 0.999/0.0005) would
-        # otherwise dominate any edge ranking.
-        if a.get("is_stale") or b.get("is_stale"):
+        # otherwise dominate any live edge ranking.
+        pair_settled = bool(a.get("is_stale") or b.get("is_stale"))
+        if status == "live" and pair_settled:
             dropped_stale += 1
             continue
-        # Skip one-sided pairs: a leg without a two-sided book can't show a
-        # cross-venue spread, and a near-term cluster of these (a venue not
-        # quoting that leg yet / closed-early) would otherwise fill the page and
-        # crowd out genuinely-comparable both-priced pairs.  Cheap in-memory
-        # check; the over-fetch (above) hydrates deep enough to scan past them.
-        if not (_has_two_sided_book(a) and _has_two_sided_book(b)):
+        # Invert the live filter for settled: keep ONLY settled pairs, drop live.
+        if status == "settled" and not pair_settled:
+            dropped_live += 1
+            continue
+        # status == "all": no resolution filter.
+        # One-sided drop applies ONLY to the live path — a leg without a
+        # two-sided book can't show a cross-venue spread, and a near-term
+        # cluster of these would crowd out genuinely-comparable both-priced
+        # pairs.  settled/all keep one-sided pairs (settled legs are commonly
+        # unquoted; `all` is an unfiltered dump).  Cheap in-memory check; the
+        # over-fetch (above) hydrates deep enough to scan past them.
+        if status == "live" and not (_has_two_sided_book(a) and _has_two_sided_book(b)):
             dropped_one_sided += 1
             continue
         out.append({
@@ -290,8 +339,10 @@ async def handle_markets_equivalents(
         "count": len(out),
         "meta": {
             "limit": limit,
+            "status": status,
             "dropped_stale": dropped_stale,
             "dropped_one_sided": dropped_one_sided,
+            "dropped_live": dropped_live,
             "candidates_hydrated": len(pairs),
             "fungible_only": fungible_only,
             "include_rules": include_rules,
