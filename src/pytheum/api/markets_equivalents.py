@@ -55,13 +55,15 @@ _OVERFETCH_FACTOR = 4
 # candidate id set — the book-presence check itself is in-memory, no extra fetch.
 _MAX_CANDIDATES = 500
 # Floor on the hydration set regardless of `limit`.  Many export pairs reference
-# markets not (yet) in the ingest table — the soonest-resolving front can be a
-# whole cluster of un-ingested markets (e.g. a freshly-wired matcher's class),
-# so a small `limit` (=> small limit*factor) could hydrate only that dead
-# cluster and return an empty page even though live, hydratable pairs sit just
-# deeper.  Hydrating at least this many candidates (2 cheap batch queries) keeps
-# small-limit calls robust to an un-ingested front.
-_MIN_CANDIDATES = 150
+# markets not (yet) in the ingest table, and the soonest-resolving front is dense
+# with un-ingested / one-sided pairs — so a small `limit` (=> small limit*factor)
+# would hydrate only that dead front and surface few complete pairs even though
+# live both-priced pairs sit deeper.  Set to _MAX_CANDIDATES so EVERY page
+# (incl. the default limit=50) hydrates as deep as the scanner's limit=150 and
+# fills with genuinely-comparable pairs (the default surface should be as rich as
+# t_find_divergences').  Still 2 batched queries; the warm loop pre-pays it for
+# the 50/150 keys so callers hit cache.
+_MIN_CANDIDATES = 500
 
 # The pairs join (136k equivalence rows x markets) plus the 300-id staleness
 # window run ~20s on the shared-compute DB — past the MCP transport's patience
