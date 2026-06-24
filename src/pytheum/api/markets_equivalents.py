@@ -47,7 +47,13 @@ MAX_LIMIT = 200
 #     don't starve the result below `limit`.
 _SCAN_BUDGET_ROWS = 3000
 _OVERFETCH_FACTOR = 4
-_MAX_CANDIDATES = 300
+# Raised from 300: the page now also skips one-sided pairs (a leg without a
+# two-sided book — see _has_two_sided_book), so when a near-term cluster of
+# one-sided pairs dominates the soonest-resolving front we must hydrate deeper
+# to reach `limit` genuinely-comparable both-priced pairs. Hydration stays 2
+# batched queries (fetch_markets_by_ids + attach_quote_staleness) over the
+# candidate id set — the book-presence check itself is in-memory, no extra fetch.
+_MAX_CANDIDATES = 500
 # Floor on the hydration set regardless of `limit`.  Many export pairs reference
 # markets not (yet) in the ingest table — the soonest-resolving front can be a
 # whole cluster of un-ingested markets (e.g. a freshly-wired matcher's class),
@@ -104,6 +110,20 @@ def _leg(r: dict[str, Any], *, include_rules: bool = False) -> dict[str, Any]:
     if include_rules:
         leg["resolution"] = resolution_from_payload(r.get("payload"))
     return leg
+
+
+def _has_two_sided_book(leg: dict[str, Any]) -> bool:
+    """True when the leg carries a two-sided book (both bid and ask present).
+
+    A cross-venue spread/edge is only computable when BOTH legs are two-sided;
+    a one-sided or absent book (venue not quoting — e.g. a closed/illiquid leg
+    of a matched pair) can't show an edge.  The collection browse skips such
+    pairs so a near-term cluster of one-sided pairs at the soonest-resolving
+    front doesn't crowd out genuinely-comparable both-priced pairs.  In-memory
+    on the already-hydrated leg — no extra fetch.
+    """
+    book = leg.get("book")
+    return bool(book and book.get("bid") is not None and book.get("ask") is not None)
 
 
 def _index_rows_to_pairs(
@@ -229,6 +249,7 @@ async def handle_markets_equivalents(
 
     out = []
     dropped_stale = 0
+    dropped_one_sided = 0
     for p in pairs:
         a = legs.get(p["kalshi_market_id"])
         b = legs.get(p["polymarket_market_id"])
@@ -240,6 +261,14 @@ async def handle_markets_equivalents(
         # otherwise dominate any edge ranking.
         if a.get("is_stale") or b.get("is_stale"):
             dropped_stale += 1
+            continue
+        # Skip one-sided pairs: a leg without a two-sided book can't show a
+        # cross-venue spread, and a near-term cluster of these (a venue not
+        # quoting that leg yet / closed-early) would otherwise fill the page and
+        # crowd out genuinely-comparable both-priced pairs.  Cheap in-memory
+        # check; the over-fetch (above) hydrates deep enough to scan past them.
+        if not (_has_two_sided_book(a) and _has_two_sided_book(b)):
+            dropped_one_sided += 1
             continue
         out.append({
             "method": p.get("method"),
@@ -261,6 +290,7 @@ async def handle_markets_equivalents(
         "meta": {
             "limit": limit,
             "dropped_stale": dropped_stale,
+            "dropped_one_sided": dropped_one_sided,
             "candidates_hydrated": len(pairs),
             "fungible_only": fungible_only,
             "include_rules": include_rules,
