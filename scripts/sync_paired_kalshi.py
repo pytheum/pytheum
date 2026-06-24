@@ -24,6 +24,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import datetime as _dt
+import gzip
 import json
 import sqlite3
 from datetime import datetime
@@ -129,7 +131,47 @@ def _load_source_rows(source_db: str, tickers: set[str]) -> dict[str, tuple[Any,
     return out
 
 
-async def run(*, source_db: str, write: bool, limit: int | None) -> None:
+def export_row_to_market(kalshi_ref: str | None, kalshi_title: str | None,
+                         resolution_date: str | None, today: str) -> tuple[Any, ...] | None:
+    """Build a minimal serving markets row from an equivalence-export row.
+
+    Box-side source — needs no matcher DB or Kalshi API. Identity only: the box
+    price-refresh sidecar + market_metadata poll fill the book and the venue-precise
+    resolution_at once the row exists. resolution_date (the pair's binding close) is the
+    seed; status is derived from it vs ``today`` (the box's sweep_settled reconciles).
+    """
+    if not kalshi_ref or not kalshi_ref.startswith("kalshi:"):
+        return None
+    rd = (resolution_date or "")[:10]
+    status = "closed" if (rd and rd < today) else "active"
+    payload = {"synced_by": "kalshi_supplemental", "source": "export"}
+    return (
+        kalshi_ref, kalshi_title, status, None, None, None,
+        _iso(resolution_date), json.dumps(payload),
+    )
+
+
+def _load_export_rows(export_path: str, ids: set[str], today: str) -> dict[str, tuple[Any, ...]]:
+    """Return {serving_id: row} for the missing ids found in the equivalence export."""
+    out: dict[str, tuple[Any, ...]] = {}
+    want = set(ids)
+    with gzip.open(export_path, "rt", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            ref = r.get("kalshi_ref")
+            if ref in want:
+                row = export_row_to_market(ref, r.get("kalshi_title"),
+                                           r.get("resolution_date"), today)
+                if row is not None:
+                    out[ref] = row
+    return out
+
+
+async def run(*, source_db: str | None, from_export: str | None, today: str,
+              write: bool, limit: int | None) -> None:
     import asyncpg
 
     from scripts.load_market_equivalence import _db_url
@@ -143,11 +185,17 @@ async def run(*, source_db: str, write: bool, limit: int | None) -> None:
             print("nothing to do — every equivalence pair's Kalshi leg is present.")
             return
 
-        rows_by_id = _load_source_rows(source_db, set(missing))
+        if from_export:
+            rows_by_id = _load_export_rows(from_export, set(missing), today)
+            src_label = "export"
+        else:
+            assert source_db is not None  # main() requires exactly one source
+            rows_by_id = _load_source_rows(source_db, set(missing))
+            src_label = "matcher DB"
         found = [rows_by_id[m] for m in missing if m in rows_by_id]
         not_in_source = [m for m in missing if m not in rows_by_id]
-        print(f"resolved from matcher DB: {len(found)} | "
-              f"not in matcher DB (skipped): {len(not_in_source)}")
+        print(f"resolved from {src_label}: {len(found)} | "
+              f"not in {src_label} (skipped): {len(not_in_source)}")
         for sample in found[:5]:
             print(f"  would-upsert: {sample[0]}  status={sample[2]}  "
                   f"resolves={sample[6]}  title={str(sample[1])[:40]!r}")
@@ -172,13 +220,20 @@ async def run(*, source_db: str, write: bool, limit: int | None) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--source-db", required=True,
-                    help="Path to the matcher SQLite markets DB (data/markets.db).")
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--from-export",
+                     help="equivalence-export.jsonl.gz — box-side source, no matcher DB "
+                          "(identity rows; box sidecar fills book/precise resolution).")
+    src.add_argument("--source-db",
+                     help="matcher SQLite markets DB (laptop-side source; richer rows).")
+    ap.add_argument("--today", default=_dt.date.today().isoformat(),
+                    help="Reference date for active/closed status from resolution_date.")
     ap.add_argument("--write", action="store_true",
                     help="Actually upsert. Omitted = DRY-RUN (count + sample only).")
     ap.add_argument("--limit", type=int, default=None)
     args = ap.parse_args()
-    asyncio.run(run(source_db=args.source_db, write=args.write, limit=args.limit))
+    asyncio.run(run(source_db=args.source_db, from_export=args.from_export,
+                    today=args.today, write=args.write, limit=args.limit))
 
 
 if __name__ == "__main__":

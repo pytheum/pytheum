@@ -7,9 +7,15 @@ leg is missing never surface. This maps matcher-DB Kalshi rows into serving mark
 
 from __future__ import annotations
 
+import gzip
 import json
+from pathlib import Path
 
-from scripts.sync_paired_kalshi import kalshi_row_to_market
+from scripts.sync_paired_kalshi import (
+    _load_export_rows,
+    export_row_to_market,
+    kalshi_row_to_market,
+)
 
 
 def test_maps_id_status_resolution_and_book() -> None:
@@ -47,3 +53,39 @@ def test_non_active_status_maps_to_closed_and_no_book_without_raw() -> None:
 
 def test_empty_ticker_returns_none() -> None:
     assert kalshi_row_to_market("", None, None, None, None) is None
+
+
+# --- box-side --from-export source ---
+
+def test_export_row_active_when_resolution_future() -> None:
+    row = export_row_to_market(
+        "kalshi:KXATPGTOTAL-26JUN30X", "Total games over 24.5?", "2026-06-30", "2026-06-23")
+    assert row is not None
+    assert row[0] == "kalshi:KXATPGTOTAL-26JUN30X"  # serving id (already kalshi:…)
+    assert row[1] == "Total games over 24.5?"
+    assert row[2] == "active"
+    assert row[6] is not None and row[6].year == 2026  # resolution_at seeded
+    payload = json.loads(row[7])
+    assert payload["synced_by"] == "kalshi_supplemental"
+    assert payload["source"] == "export"
+
+
+def test_export_row_closed_when_resolution_past() -> None:
+    row = export_row_to_market("kalshi:KXOLD", "t", "2026-01-01", "2026-06-23")
+    assert row is not None and row[2] == "closed"
+
+
+def test_export_row_rejects_non_kalshi_ref() -> None:
+    assert export_row_to_market("polymarket:123", "t", "2026-06-30", "2026-06-23") is None
+    assert export_row_to_market(None, "t", None, "2026-06-23") is None
+
+
+def test_load_export_rows_filters_to_missing(tmp_path: Path) -> None:
+    p = tmp_path / "exp.jsonl.gz"
+    with gzip.open(p, "wt", encoding="utf-8") as fh:
+        for ref, title in (("kalshi:A", "TA"), ("kalshi:B", "TB")):
+            fh.write(json.dumps({"kalshi_ref": ref, "kalshi_title": title,
+                                 "resolution_date": "2026-06-30"}) + "\n")
+    out = _load_export_rows(str(p), {"kalshi:A"}, "2026-06-23")
+    assert set(out) == {"kalshi:A"}  # only the requested-missing id
+    assert out["kalshi:A"][1] == "TA"
