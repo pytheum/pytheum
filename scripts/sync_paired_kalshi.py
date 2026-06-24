@@ -1,0 +1,185 @@
+"""Upsert missing KALSHI rows for equivalence pairs into the serving markets table.
+
+The companion ``sync_paired_polymarket`` fills missing *Polymarket* rows but only for
+pairs whose KALSHI leg is already present (it JOINs ``markets ka``). Freshly-wired
+structured clusters (e.g. the tennis-total ``KXATPGTOTAL…`` series) have the *Kalshi*
+leg missing, so those pairs drop as missing-leg in browse/divergences and never surface
+(ali's eval finding #2). This script closes that gap.
+
+Source of truth for the missing Kalshi identity rows is the matcher's local market DB
+(``--source-db``, a SQLite ``markets`` table) — it already fetched every market it
+matched, so no Kalshi API auth/rate-limit is needed for a laptop-side run. We write only
+the identity + an initial book; the serving price-refresh sidecar keeps ``bestBid``/
+``bestAsk`` fresh once the row exists.
+
+Reversible: every inserted row carries ``payload.synced_by = 'kalshi_supplemental'``.
+DRY-RUN by default — pass ``--write`` to actually upsert.
+
+Usage:
+    python -m scripts.sync_paired_kalshi --source-db /path/to/matcher/data/markets.db
+    python -m scripts.sync_paired_kalshi --source-db … --write
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import contextlib
+import json
+import sqlite3
+from datetime import datetime
+from typing import Any
+
+# asyncpg + _db_url are imported lazily inside run() — they're runtime-only deps
+# (not in the dev venv), so keeping them out of module import makes the pure row
+# mapper importable + unit-testable (mirrors why the sibling scripts have no tests).
+
+_MISSING_QUERY = """
+SELECT DISTINCT e.kalshi_market_id
+FROM market_equivalence e
+LEFT JOIN markets ka ON ka.id = e.kalshi_market_id
+WHERE e.kalshi_market_id IS NOT NULL AND ka.id IS NULL
+"""
+
+_UPSERT = """
+INSERT INTO markets (id, title, venue, status, volume_usd, liquidity_usd, url,
+                     resolution_at, payload)
+VALUES ($1, $2, 'kalshi', $3, $4, $5, $6, $7, $8)
+ON CONFLICT (id) DO UPDATE SET
+    status = EXCLUDED.status,
+    volume_usd = EXCLUDED.volume_usd,
+    liquidity_usd = EXCLUDED.liquidity_usd,
+    resolution_at = EXCLUDED.resolution_at,
+    payload = EXCLUDED.payload
+"""
+
+
+def _num(v: Any) -> float | None:
+    try:
+        return float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _iso(value: Any) -> datetime | None:
+    if not value:
+        return None
+    with contextlib.suppress(ValueError, TypeError):
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return None
+
+
+def kalshi_row_to_market(market_id: str, title: str | None, status: str | None,
+                         close_date: str | None, raw_json: str | None) -> tuple[Any, ...] | None:
+    """Map a matcher-DB Kalshi row to a serving markets-table row tuple.
+
+    market_id is the bare ticker (e.g. KXATPGTOTAL-…); the serving id is kalshi:<ticker>.
+    Book fields (bestBid/bestAsk from Kalshi cents) are initial values; the serving
+    price-refresh sidecar updates them once the row exists.
+    """
+    if not market_id:
+        return None
+    d: dict[str, Any] = {}
+    if raw_json:
+        with contextlib.suppress(json.JSONDecodeError, TypeError):
+            d = json.loads(raw_json)
+    # Kalshi quotes YES in integer cents (0–100); the serving book wants [0,1] floats.
+    yes_bid, yes_ask = _num(d.get("yes_bid")), _num(d.get("yes_ask"))
+    last = _num(d.get("last_price"))
+    payload: dict[str, Any] = {
+        "bestBid": yes_bid / 100.0 if yes_bid is not None else None,
+        "bestAsk": yes_ask / 100.0 if yes_ask is not None else None,
+        "lastTradePrice": last / 100.0 if last is not None else None,
+        "rules_primary": (d.get("rules_primary") or "")[:1000] or None,
+        "event_ticker": d.get("event_ticker"),
+        "synced_by": "kalshi_supplemental",
+    }
+    payload = {k: v for k, v in payload.items() if v is not None}
+    serving_status = "active" if (status == "active") else "closed"
+    event_ticker = d.get("event_ticker")
+    url = f"https://kalshi.com/markets/{event_ticker}" if event_ticker else None
+    resolution_at = _iso(close_date) or _iso(d.get("close_time")) or _iso(d.get("expiration_time"))
+    return (
+        f"kalshi:{market_id}",
+        title or d.get("title"),
+        serving_status,
+        _num(d.get("volume_fp") or d.get("volume")),
+        _num(d.get("liquidity_dollars")),
+        url,
+        resolution_at,
+        json.dumps(payload),
+    )
+
+
+def _load_source_rows(source_db: str, tickers: set[str]) -> dict[str, tuple[Any, ...]]:
+    """Return {serving_id: market_row_tuple} for the requested tickers found in the
+    matcher SQLite DB. serving_id = kalshi:<ticker>."""
+    con = sqlite3.connect(source_db)
+    out: dict[str, tuple[Any, ...]] = {}
+    bare = {t.split(":", 1)[1] if t.startswith("kalshi:") else t for t in tickers}
+    q = ("SELECT market_id, title, status, close_date, raw_json FROM markets "
+         "WHERE platform='kalshi' AND market_id = ?")
+    for tk in bare:
+        r = con.execute(q, (tk,)).fetchone()
+        if r is None:
+            continue
+        row = kalshi_row_to_market(*r)
+        if row is not None:
+            out[row[0]] = row
+    con.close()
+    return out
+
+
+async def run(*, source_db: str, write: bool, limit: int | None) -> None:
+    import asyncpg
+
+    from scripts.load_market_equivalence import _db_url
+    con = await asyncpg.connect(_db_url(), statement_cache_size=0)
+    try:
+        await con.execute("SET statement_timeout = 0")
+        q = _MISSING_QUERY + (f" LIMIT {int(limit)}" if limit else "")
+        missing = [r["kalshi_market_id"] for r in await con.fetch(q)]
+        print(f"missing Kalshi legs in serving markets table: {len(missing)}")
+        if not missing:
+            print("nothing to do — every equivalence pair's Kalshi leg is present.")
+            return
+
+        rows_by_id = _load_source_rows(source_db, set(missing))
+        found = [rows_by_id[m] for m in missing if m in rows_by_id]
+        not_in_source = [m for m in missing if m not in rows_by_id]
+        print(f"resolved from matcher DB: {len(found)} | "
+              f"not in matcher DB (skipped): {len(not_in_source)}")
+        for sample in found[:5]:
+            print(f"  would-upsert: {sample[0]}  status={sample[2]}  "
+                  f"resolves={sample[6]}  title={str(sample[1])[:40]!r}")
+        if not_in_source[:5]:
+            print(f"  not-in-source sample: {not_in_source[:5]}")
+
+        if not write:
+            print(f"\nDRY-RUN: would upsert {len(found)} Kalshi rows. "
+                  f"Re-run with --write to apply.")
+            return
+
+        await con.executemany(_UPSERT, found)
+        n_live = await con.fetchval(
+            "SELECT count(*) FROM market_equivalence e "
+            "JOIN markets ka ON ka.id = e.kalshi_market_id AND ka.status='active' "
+            "JOIN markets pa ON pa.id = e.polymarket_market_id AND pa.status='active'"
+        )
+        print(f"\nUPSERTED {len(found)} Kalshi rows. both-legs-active pairs now: {n_live}")
+    finally:
+        await con.close()
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--source-db", required=True,
+                    help="Path to the matcher SQLite markets DB (data/markets.db).")
+    ap.add_argument("--write", action="store_true",
+                    help="Actually upsert. Omitted = DRY-RUN (count + sample only).")
+    ap.add_argument("--limit", type=int, default=None)
+    args = ap.parse_args()
+    asyncio.run(run(source_db=args.source_db, write=args.write, limit=args.limit))
+
+
+if __name__ == "__main__":
+    main()
