@@ -86,6 +86,18 @@ def test_load_export_rows_filters_to_missing(tmp_path: Path) -> None:
         for ref, title in (("kalshi:A", "TA"), ("kalshi:B", "TB")):
             fh.write(json.dumps({"kalshi_ref": ref, "kalshi_title": title,
                                  "resolution_date": "2026-06-30"}) + "\n")
-    out = _load_export_rows(str(p), {"kalshi:A"}, "2026-06-23")
+    out = _load_export_rows(str(p), {"kalshi:A"}, "2026-06-23", None)
     assert set(out) == {"kalshi:A"}  # only the requested-missing id
     assert out["kalshi:A"][1] == "TA"
+
+
+def test_load_export_rows_live_only_skips_past_resolution(tmp_path: Path) -> None:
+    p = tmp_path / "exp.jsonl.gz"
+    with gzip.open(p, "wt", encoding="utf-8") as fh:
+        fh.write(json.dumps({"kalshi_ref": "kalshi:LIVE", "kalshi_title": "live",
+                             "resolution_date": "2026-06-30"}) + "\n")
+        fh.write(json.dumps({"kalshi_ref": "kalshi:OLD", "kalshi_title": "old",
+                             "resolution_date": "2022-01-01"}) + "\n")
+    # min_date = today -> only the future-resolving leg survives (the ~97%-historical skip)
+    out = _load_export_rows(str(p), {"kalshi:LIVE", "kalshi:OLD"}, "2026-06-23", "2026-06-23")
+    assert set(out) == {"kalshi:LIVE"}
