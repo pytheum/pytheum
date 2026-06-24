@@ -1,24 +1,28 @@
 """Standalone offline-serve smoke tests.
 
-Verifies that the published wheel, when installed on a clean machine with no
-database, secrets, or env overrides, correctly:
+The matcher gold set is NO LONGER shipped in the package — it is served for free
+via the hosted API, loaded at runtime from a private path (PYTHEUM_EQUIVALENCE_PATH
+/ PYTHEUM_RELATED_PATH). A clean `pip install pytheum` therefore ships NO dataset
+blobs; only MANIFEST.json remains as metadata.
 
-  1. Resolves the bundled datasets via importlib.resources.
-  2. Serves /v1/status, /v1/markets/equivalents, /v1/markets/matched,
+These tests verify that with no dataset configured the stack:
+
+  1. Resolves NO bundled .gz via importlib.resources (only MANIFEST.json is present).
+  2. Degrades gracefully — EquivalenceIndex.load()/RelatedIndex.load() with no path
+     return an EMPTY index with file_missing=True, never crashing.
+  3. Still serves /v1/status, /v1/markets/equivalents, /v1/markets/matched,
      /v1/markets/{ref}/rules, /v1/markets/{ref}/equivalents, /v1/markets/related,
-     and /llms.txt from bundled data (all 200, no errors, real pair counts).
-  3. Returns the graceful degraded response on /v1/markets/screen (no DAO).
+     /llms.txt, and /healthz (all 200) — and degrades /v1/markets/screen (no DAO).
+  4. Serves real pairs when pointed at an explicit dataset file (the runtime
+     contract): RouterApp wiring works end-to-end over a tiny synthetic fixture.
 
 All tests use dao=None, clients=None — no DB, no network, no secrets.
-A real kalshi_ticker from the bundled equivalence export is used to prove the
-index loaded real data.
-
-Real ticker used: COSTCOHOTDOG-27 (human_adjudicated, confirmed present in
-datasets/equivalence-export.jsonl.gz at build time).
 """
 from __future__ import annotations
 
+import gzip
 import importlib.resources
+import json
 from pathlib import Path
 
 import httpx
@@ -33,15 +37,81 @@ from pytheum.related.index import get_index as get_rel_index
 from pytheum.routing import RouterApp
 
 # ---------------------------------------------------------------------------
-# Shared fixture: RouterApp wired exactly as `pytheum serve` does it
+# Synthetic fixtures: a tiny dataset written to tmp_path, loaded via an explicit
+# path. This stands in for the private runtime dataset (PYTHEUM_*_PATH) without
+# reintroducing a dependency on a large tracked file.
 # ---------------------------------------------------------------------------
 
-_REAL_TICKER = "COSTCOHOTDOG-27"  # confirmed in bundled export
+_FIXTURE_TICKER = "FIXTURETESTMKT-27"
 
 
-def _build_standalone_app() -> RouterApp:
-    """Build a RouterApp the same way `pytheum serve` does: null dao, bundled indexes."""
-    eq_idx = EquivalenceIndex.load()  # uses importlib.resources path
+def _write_equivalence_fixture(tmp_path: Path) -> Path:
+    """Write a few synthetic equivalence rows, gzipped, and return the path."""
+    rows = [
+        {
+            "kalshi_ticker": _FIXTURE_TICKER,
+            "kalshi_ref": f"kalshi:{_FIXTURE_TICKER}",
+            "kalshi_title": "Fixture market",
+            "pm_ref": "polymarket:12345",
+            "pm_gamma_id": "12345",
+            "pm_condition_id": "0xabc123",
+            "pm_slug": "fixture-market",
+            "pm_title": "Fixture market (PM)",
+            "bet_type": "moneyline",
+            "method": "human_adjudicated",
+        },
+        {
+            "kalshi_ticker": "FIXTURETESTMKT-28",
+            "kalshi_ref": "kalshi:FIXTURETESTMKT-28",
+            "kalshi_title": "Second fixture market",
+            "pm_ref": "polymarket:67890",
+            "pm_gamma_id": "67890",
+            "pm_condition_id": "0xdef456",
+            "pm_slug": "second-fixture-market",
+            "pm_title": "Second fixture market (PM)",
+            "bet_type": "total",
+            "method": "opus_backstop",
+        },
+    ]
+    p = tmp_path / "equivalence-export.jsonl.gz"
+    with gzip.open(p, "wt", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(row) + "\n")
+    return p
+
+
+def _write_related_fixture(tmp_path: Path) -> Path:
+    """Write a single synthetic related row, gzipped, and return the path."""
+    rows = [
+        {
+            "kalshi_ticker": _FIXTURE_TICKER,
+            "kalshi_title": "Fixture market",
+            "pm_gamma_id": "12345",
+            "pm_slug": "fixture-market",
+            "pm_title": "Fixture market (PM)",
+            "relation": "same_asset_date_contained",
+        },
+    ]
+    p = tmp_path / "related-export.jsonl.gz"
+    with gzip.open(p, "wt", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(row) + "\n")
+    return p
+
+
+def _build_app_with_fixtures(tmp_path: Path) -> RouterApp:
+    """Build a RouterApp the way `pytheum serve` does, but with synthetic indexes
+    loaded from explicit tmp_path files (stand-in for the private runtime dataset)."""
+    eq_idx = EquivalenceIndex.load(_write_equivalence_fixture(tmp_path))
+    rel_idx = RelatedIndex.load(_write_related_fixture(tmp_path))
+    registry = RouterRegistry()
+    register_all(registry, dao=None, equivalence=eq_idx, related=rel_idx, clients=None)
+    return RouterApp(registry.build_router())
+
+
+def _build_empty_app() -> RouterApp:
+    """Build a RouterApp with NO dataset configured — indexes degrade to empty."""
+    eq_idx = EquivalenceIndex.load()  # no path, no bundled data -> empty
     rel_idx = RelatedIndex.load()
     registry = RouterRegistry()
     register_all(registry, dao=None, equivalence=eq_idx, related=rel_idx, clients=None)
@@ -54,163 +124,170 @@ def _client(app: RouterApp) -> httpx.AsyncClient:
 
 
 # ---------------------------------------------------------------------------
-# 1. importlib.resources finds the bundled datasets
+# 1. The package ships NO dataset .gz — only MANIFEST.json remains
 # ---------------------------------------------------------------------------
 
 
-def test_importlib_resources_finds_equivalence_gz() -> None:
-    """importlib.resources must locate equivalence-export.jsonl.gz in the wheel."""
+def test_no_bundled_equivalence_gz() -> None:
+    """The matcher gold set must NOT ship in the package — no bundled .gz."""
     ref = importlib.resources.files("pytheum.datasets").joinpath(
         "equivalence-export.jsonl.gz"
     )
-    p = Path(str(ref))
-    assert p.exists(), f"bundled equivalence dataset not found at {p}"
-    assert p.stat().st_size > 1_000_000, "file is too small — may be an LFS pointer"
+    assert not Path(str(ref)).exists(), (
+        "equivalence-export.jsonl.gz is bundled in the package — the gold set must "
+        "be served via the API, not shipped as a download"
+    )
 
 
-def test_importlib_resources_finds_related_gz() -> None:
-    """importlib.resources must locate related-export.jsonl.gz in the wheel."""
+def test_no_bundled_related_gz() -> None:
+    """The related dataset must NOT ship in the package — no bundled .gz."""
     ref = importlib.resources.files("pytheum.datasets").joinpath(
         "related-export.jsonl.gz"
     )
-    p = Path(str(ref))
-    assert p.exists(), f"bundled related dataset not found at {p}"
-    assert p.stat().st_size > 1_000, "file is too small — may be an LFS pointer"
+    assert not Path(str(ref)).exists(), "related-export.jsonl.gz must not be bundled"
 
 
-def test_importlib_resources_finds_manifest() -> None:
-    """MANIFEST.json must be present in the bundled package data."""
+def test_manifest_still_present() -> None:
+    """MANIFEST.json (metadata, not data) must still be present in package data."""
     ref = importlib.resources.files("pytheum.datasets").joinpath("MANIFEST.json")
     p = Path(str(ref))
     assert p.exists(), f"MANIFEST.json not found at {p}"
 
 
 # ---------------------------------------------------------------------------
-# 2. Indexes load real data from bundled files
+# 2. Indexes degrade gracefully when no dataset is configured
 # ---------------------------------------------------------------------------
 
 
-def test_equivalence_index_loads_real_pairs() -> None:
-    """EquivalenceIndex.load() with no path arg must find >100k pairs."""
+def test_equivalence_index_degrades_when_unconfigured() -> None:
+    """EquivalenceIndex.load() with no path + no bundled data must degrade EMPTY."""
     idx = EquivalenceIndex.load()
-    assert not idx.file_missing, "file_missing=True — dataset was not found"
+    assert idx.file_missing, "expected file_missing=True with no dataset configured"
+    assert idx.pairs_loaded == 0, (
+        f"expected 0 pairs with no dataset, got {idx.pairs_loaded}"
+    )
+
+
+def test_related_index_degrades_when_unconfigured() -> None:
+    """RelatedIndex.load() with no path + no bundled data must degrade EMPTY."""
+    idx = RelatedIndex.load()
+    assert idx.file_missing, "expected file_missing=True with no dataset configured"
+    assert idx.pairs_loaded == 0, (
+        f"expected 0 pairs with no dataset, got {idx.pairs_loaded}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 3. Indexes load real data when pointed at an explicit dataset file
+# ---------------------------------------------------------------------------
+
+
+def test_equivalence_index_loads_from_explicit_path(tmp_path: Path) -> None:
+    """EquivalenceIndex.load(path) must ingest a real .jsonl.gz from disk."""
+    idx = EquivalenceIndex.load(_write_equivalence_fixture(tmp_path))
+    assert not idx.file_missing
     assert idx.load_error is None, f"load_error: {idx.load_error}"
-    assert idx.pairs_loaded > 100_000, (
-        f"expected >100k pairs, got {idx.pairs_loaded} — dataset may be missing"
-    )
-
-
-def test_equivalence_index_real_ticker_lookup() -> None:
-    """A known ticker from the bundled export must be found in the loaded index."""
-    idx = EquivalenceIndex.load()
-    rows, via = idx.lookup(f"kalshi:{_REAL_TICKER}")
-    assert rows, (
-        f"kalshi:{_REAL_TICKER} not found in bundled index "
-        f"(pairs_loaded={idx.pairs_loaded}) — dataset may be truncated or wrong"
-    )
+    assert idx.pairs_loaded == 2
+    rows, via = idx.lookup(f"kalshi:{_FIXTURE_TICKER}")
+    assert rows, f"kalshi:{_FIXTURE_TICKER} not found in loaded index"
     assert via == "kalshi_ticker"
 
 
-def test_related_index_loads_real_pairs() -> None:
-    """RelatedIndex.load() with no path arg must find at least 1 pair."""
-    idx = RelatedIndex.load()
-    assert not idx.file_missing, "file_missing=True — related dataset was not found"
-    assert idx.pairs_loaded >= 1, (
-        f"expected ≥1 related pair, got {idx.pairs_loaded}"
-    )
+def test_related_index_loads_from_explicit_path(tmp_path: Path) -> None:
+    """RelatedIndex.load(path) must ingest a real .jsonl.gz from disk."""
+    idx = RelatedIndex.load(_write_related_fixture(tmp_path))
+    assert not idx.file_missing
+    assert idx.pairs_loaded == 1
 
 
 # ---------------------------------------------------------------------------
-# 3. HTTP surface — all Group A routes return 200 with real data
+# 4. HTTP surface — routes return 200 with real data from the configured dataset
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_status_returns_real_pair_counts() -> None:
-    """/v1/status must report pairs_loaded > 100k from bundled data."""
-    app = _build_standalone_app()
+async def test_status_returns_pair_counts(tmp_path: Path) -> None:
+    """/v1/status must report the configured dataset's pairs_loaded."""
+    import pytheum.api.status as _status_mod
+
+    _status_mod._cache = None  # 60s status cache is module-level; clear for isolation
+    app = _build_app_with_fixtures(tmp_path)
     async with _client(app) as c:
         resp = await c.get("/v1/status")
     assert resp.status_code == 200, f"expected 200, got {resp.status_code}"
     body = resp.json()
-    assert body["equivalence"]["pairs_loaded"] > 100_000, (
-        f"expected >100k pairs in status, got {body['equivalence']['pairs_loaded']}"
+    assert body["equivalence"]["pairs_loaded"] == 2, (
+        f"expected 2 pairs in status, got {body['equivalence']['pairs_loaded']}"
     )
     assert body["service"]["version"] != "", "service.version must not be empty"
 
 
 @pytest.mark.asyncio
-async def test_markets_equivalents_returns_real_pairs() -> None:
-    """/v1/markets/equivalents must return at least 1 pair from bundled data."""
-    app = _build_standalone_app()
+async def test_markets_equivalents_returns_pairs(tmp_path: Path) -> None:
+    """/v1/markets/equivalents must return data (not degraded) from the dataset."""
+    app = _build_app_with_fixtures(tmp_path)
     async with _client(app) as c:
         resp = await c.get("/v1/markets/equivalents?limit=5")
     assert resp.status_code == 200, f"expected 200, got {resp.status_code}"
     body = resp.json()
-    # The handler returns a list or dict — check we get actual data
-    # The format is {"equivalents": [...], ...} or similar; just verify non-error shape
     assert isinstance(body, dict), "expected JSON object"
-    # Not degraded
     assert body.get("meta", {}).get("degraded") is not True, (
-        "equivalents returned degraded — bundled datasets not found"
+        "equivalents returned degraded — configured dataset not found"
     )
 
 
 @pytest.mark.asyncio
-async def test_markets_matched_returns_real_pairs() -> None:
-    """/v1/markets/matched must return >0 pairs from bundled data."""
-    app = _build_standalone_app()
+async def test_markets_matched_returns_pairs(tmp_path: Path) -> None:
+    """/v1/markets/matched must return the configured dataset's pairs."""
+    app = _build_app_with_fixtures(tmp_path)
     async with _client(app) as c:
         resp = await c.get("/v1/markets/matched?limit=10")
     assert resp.status_code == 200, f"expected 200, got {resp.status_code}"
     body = resp.json()
     assert "pairs" in body, f"missing 'pairs' key: {list(body.keys())}"
-    assert len(body["pairs"]) > 0, "expected real pairs from bundled data, got 0"
-    assert body["total"] > 100_000, (
-        f"expected >100k total pairs, got {body['total']}"
-    )
+    assert len(body["pairs"]) > 0, "expected pairs from configured dataset, got 0"
+    assert body["total"] == 2, f"expected 2 total pairs, got {body['total']}"
     assert body.get("meta", {}).get("degraded") is not True
 
 
 @pytest.mark.asyncio
-async def test_per_ref_equivalents_real_ticker() -> None:
-    """/v1/markets/{ref}/equivalents must find a match for the known ticker."""
-    app = _build_standalone_app()
+async def test_per_ref_equivalents_fixture_ticker(tmp_path: Path) -> None:
+    """/v1/markets/{ref}/equivalents must find a match for the fixture ticker."""
+    app = _build_app_with_fixtures(tmp_path)
     async with _client(app) as c:
-        resp = await c.get(f"/v1/markets/kalshi:{_REAL_TICKER}/equivalents")
+        resp = await c.get(f"/v1/markets/kalshi:{_FIXTURE_TICKER}/equivalents")
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["equivalents"]) >= 1, (
-        f"expected ≥1 equivalent for {_REAL_TICKER}, got 0"
+        f"expected ≥1 equivalent for {_FIXTURE_TICKER}, got 0"
     )
     assert body["meta"]["matched_via"] == "kalshi_ticker"
 
 
 @pytest.mark.asyncio
-async def test_rules_real_ticker() -> None:
-    """/v1/markets/{ref}/rules must return 200 and rules content for a known ticker."""
-    app = _build_standalone_app()
+async def test_rules_fixture_ticker(tmp_path: Path) -> None:
+    """/v1/markets/{ref}/rules must return 200 for a known ticker."""
+    app = _build_app_with_fixtures(tmp_path)
     async with _client(app) as c:
-        resp = await c.get(f"/v1/markets/kalshi:{_REAL_TICKER}/rules")
+        resp = await c.get(f"/v1/markets/kalshi:{_FIXTURE_TICKER}/rules")
     assert resp.status_code == 200
     body = resp.json()
-    # Must have at least one leg with rules content
     assert isinstance(body, dict), f"unexpected response type: {type(body)}"
 
 
 @pytest.mark.asyncio
-async def test_related_endpoint_returns_200() -> None:
+async def test_related_endpoint_returns_200(tmp_path: Path) -> None:
     """/v1/markets/{ref}/related must return 200 (empty or populated)."""
-    app = _build_standalone_app()
+    app = _build_app_with_fixtures(tmp_path)
     async with _client(app) as c:
-        resp = await c.get(f"/v1/markets/kalshi:{_REAL_TICKER}/related")
+        resp = await c.get(f"/v1/markets/kalshi:{_FIXTURE_TICKER}/related")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_llms_txt_returns_text() -> None:
+async def test_llms_txt_returns_text(tmp_path: Path) -> None:
     """/llms.txt must return 200 text/plain with non-empty content."""
-    app = _build_standalone_app()
+    app = _build_app_with_fixtures(tmp_path)
     async with _client(app) as c:
         resp = await c.get("/llms.txt")
     assert resp.status_code == 200
@@ -219,9 +296,9 @@ async def test_llms_txt_returns_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_healthz_returns_ok() -> None:
+async def test_healthz_returns_ok(tmp_path: Path) -> None:
     """/healthz must return 200 {ok: true}."""
-    app = _build_standalone_app()
+    app = _build_app_with_fixtures(tmp_path)
     async with _client(app) as c:
         resp = await c.get("/healthz")
     assert resp.status_code == 200
@@ -229,14 +306,43 @@ async def test_healthz_returns_ok() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. Graceful degradation (no DAO / no clients)
+# 5. HTTP surface still serves (degraded but 200) when no dataset is configured
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_screen_degrades_without_dao() -> None:
+async def test_status_returns_zero_pairs_when_unconfigured() -> None:
+    """/v1/status must report 0 pairs and still return 200 when no dataset is set."""
+    import pytheum.api.status as _status_mod
+
+    _status_mod._cache = None  # 60s status cache is module-level; clear for isolation
+    app = _build_empty_app()
+    async with _client(app) as c:
+        resp = await c.get("/v1/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["equivalence"]["pairs_loaded"] == 0
+
+
+@pytest.mark.asyncio
+async def test_healthz_ok_when_unconfigured() -> None:
+    """/healthz must return 200 {ok: true} even with no dataset configured."""
+    app = _build_empty_app()
+    async with _client(app) as c:
+        resp = await c.get("/healthz")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# 6. Graceful degradation (no DAO / no clients)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_screen_degrades_without_dao(tmp_path: Path) -> None:
     """/v1/markets/screen with dao=None must return 200 with degraded=true."""
-    app = _build_standalone_app()
+    app = _build_app_with_fixtures(tmp_path)
     async with _client(app) as c:
         resp = await c.get("/v1/markets/screen")
     assert resp.status_code == 200
@@ -246,7 +352,7 @@ async def test_screen_degrades_without_dao() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. CLI module importable
+# 7. CLI module importable
 # ---------------------------------------------------------------------------
 
 
@@ -267,12 +373,12 @@ def test_cli_serve_help_exits_0(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 6. Singleton get_index() delegates to bundled data
+# 8. Singleton get_index() degrades gracefully without a configured dataset
 # ---------------------------------------------------------------------------
 
 
-def test_singleton_get_index_loads_bundled_data() -> None:
-    """get_index() (used by the module-level lazy singleton) must load bundled data."""
+def test_singleton_get_index_degrades_when_unconfigured() -> None:
+    """get_index() (module-level lazy singleton) must degrade to an empty index."""
     # Reset the singleton so this test is not order-dependent.
     import pytheum.equivalence.index as _ei
     import pytheum.related.index as _ri
@@ -283,7 +389,7 @@ def test_singleton_get_index_loads_bundled_data() -> None:
     eq = get_eq_index()
     rel = get_rel_index()
 
-    assert eq.pairs_loaded > 100_000, (
-        f"get_index() loaded only {eq.pairs_loaded} pairs — bundled data not found"
+    assert eq.pairs_loaded == 0, (
+        f"get_index() loaded {eq.pairs_loaded} pairs — expected 0 (no dataset shipped)"
     )
-    assert rel.pairs_loaded >= 1
+    assert rel.pairs_loaded == 0
