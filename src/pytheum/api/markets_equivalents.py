@@ -54,16 +54,15 @@ _OVERFETCH_FACTOR = 4
 # batched queries (fetch_markets_by_ids + attach_quote_staleness) over the
 # candidate id set — the book-presence check itself is in-memory, no extra fetch.
 _MAX_CANDIDATES = 500
-# Floor on the hydration set regardless of `limit`.  Many export pairs reference
-# markets not (yet) in the ingest table, and the soonest-resolving front is dense
-# with un-ingested / one-sided pairs — so a small `limit` (=> small limit*factor)
-# would hydrate only that dead front and surface few complete pairs even though
-# live both-priced pairs sit deeper.  Set to _MAX_CANDIDATES so EVERY page
-# (incl. the default limit=50) hydrates as deep as the scanner's limit=150 and
-# fills with genuinely-comparable pairs (the default surface should be as rich as
-# t_find_divergences').  Still 2 batched queries; the warm loop pre-pays it for
-# the 50/150 keys so callers hit cache.
-_MIN_CANDIDATES = 500
+# Floor on the hydration set regardless of `limit`.  A small `limit` would
+# otherwise hydrate only the un-ingested/one-sided soonest front and surface few
+# complete pairs.  Kept modest (NOT raised to _MAX_CANDIDATES): the box is
+# CPU/memory-constrained (pit OOM-restarts near its 2 GB cgroup cap), and
+# hydrating 500 on every default page — incl. the warm loop's 60s refresh of
+# both the 50 and 150 keys — was pure load on a 97%-CPU box for cosmetic default
+# richness.  The scanner key (limit=150) still hydrates up to _MAX_CANDIDATES;
+# the default (50) stays light.  Restore to 500 once the box is rightsized.
+_MIN_CANDIDATES = 150
 
 # The pairs join (136k equivalence rows x markets) plus the 300-id staleness
 # window run ~20s on the shared-compute DB — past the MCP transport's patience
