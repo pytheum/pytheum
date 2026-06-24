@@ -8,6 +8,7 @@ triage edge + tradeability without a follow-up /context call.
 """
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -42,6 +43,19 @@ _MOVE_POOL = 300
 # favorite stays on bundle_top_outcome; this is the top-N for trading the whole
 # bundle (#224 — the $64M "Fed Chair" bundle was unreadable from one favorite).
 _BUNDLE_OUTCOMES_LIMIT = 5
+
+# Short-TTL param-keyed response cache (mirrors markets_equivalents._cache).
+# A load test showed /v1/markets/screen is the serving concurrency ceiling:
+# p50 152ms -> 1056ms as concurrency goes 1->25 because every request runs a
+# live Supabase query, while the already-cached /v1/markets/equivalents stays
+# flat at ~70ms. Caching repeated/popular param-combos flattens the curve for
+# exactly the bursts that saturate it. The markets table updates via
+# ingest/price-sync, so 20s staleness is fine for a browse/discovery surface
+# (per-quote staleness_seconds already signals freshness to clients). Only
+# successful real (dao-backed) results are cached — never the dao=None
+# degraded body.
+_SCREEN_CACHE_TTL_S = 20.0
+_screen_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def _num(v: str | None) -> float | None:
@@ -121,9 +135,11 @@ async def handle_markets_screen(
     query: dict[str, str],
     *,
     dao: Any,
+    force_refresh: bool = False,
 ) -> tuple[int, dict[str, Any]]:
     # Never-500 convention: when booted without a DB (dao=None, secretless config)
-    # return a structured 200 with degraded meta rather than crashing.
+    # return a structured 200 with degraded meta rather than crashing. NOT cached
+    # — only successful real results below are.
     if dao is None:
         return 200, {
             "markets": [],
@@ -145,16 +161,43 @@ async def handle_markets_screen(
     if sort_by not in _VALID_SORT:
         sort_by = "volume"
     exclude_stale = query.get("exclude_stale", "").lower() == "true"
+    min_volume = _num(query.get("min_volume"))
+    max_volume = _num(query.get("max_volume"))
+    min_liquidity = _num(query.get("min_liquidity"))
+    resolves_before = _dt(query.get("resolves_before"))
+    resolves_after = _dt(query.get("resolves_after"))
+
+    # Param-keyed cache check (after parse so the key reflects NORMALIZED values:
+    # the venue/venues alias collapses, sort_by/status fall back, dates parse to
+    # the same datetime). Built from every param that reaches screen_markets +
+    # the handler's post-fetch filters (exclude_stale), so two requests with
+    # different params never collide and two identical requests hit. venues are
+    # sorted so member-order doesn't fork the key.
+    cache_key = (
+        f"limit={limit}"
+        f"|venues={','.join(sorted(venues)) if venues else ''}"
+        f"|status={status}"
+        f"|sort_by={sort_by}"
+        f"|exclude_stale={exclude_stale}"
+        f"|min_volume={min_volume}"
+        f"|max_volume={max_volume}"
+        f"|min_liquidity={min_liquidity}"
+        f"|resolves_before={resolves_before.isoformat() if resolves_before else ''}"
+        f"|resolves_after={resolves_after.isoformat() if resolves_after else ''}"
+    )
+    hit = _screen_cache.get(cache_key)
+    if not force_refresh and hit is not None and time.monotonic() - hit[0] < _SCREEN_CACHE_TTL_S:
+        return 200, hit[1]
 
     move_sort = sort_by == "move"
     rows = await dao.screen_markets(
         venues=venues,
         status=status,
-        min_volume=_num(query.get("min_volume")),
-        max_volume=_num(query.get("max_volume")),
-        min_liquidity=_num(query.get("min_liquidity")),
-        resolves_before=_dt(query.get("resolves_before")),
-        resolves_after=_dt(query.get("resolves_after")),
+        min_volume=min_volume,
+        max_volume=max_volume,
+        min_liquidity=min_liquidity,
+        resolves_before=resolves_before,
+        resolves_after=resolves_after,
         # Movers rank a top-volume pool client-side (the move column lives in
         # the price tables, not markets) — fetch the pool by volume first.
         sort_by="volume" if move_sort else sort_by,
@@ -226,15 +269,15 @@ async def handle_markets_screen(
     markets = dedupe_markets_by_question(markets)
     if move_sort:
         markets = markets[:limit]
-    return 200, {
+    body = {
         "markets": markets,
         "count": len(markets),
         "meta": {
             "filters": {
                 "venues": venues, "status": status, "sort_by": sort_by,
-                "min_volume": _num(query.get("min_volume")),
-                "max_volume": _num(query.get("max_volume")),
-                "min_liquidity": _num(query.get("min_liquidity")),
+                "min_volume": min_volume,
+                "max_volume": max_volume,
+                "min_liquidity": min_liquidity,
                 "resolves_before": query.get("resolves_before") or None,
                 "resolves_after": query.get("resolves_after") or None,
                 "exclude_stale": exclude_stale,
@@ -244,3 +287,5 @@ async def handle_markets_screen(
             "deduped": pre_dedup - len(markets),
         },
     }
+    _screen_cache[cache_key] = (time.monotonic(), body)
+    return 200, body
