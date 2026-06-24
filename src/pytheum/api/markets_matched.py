@@ -36,9 +36,9 @@ offset : int, default 0
 from __future__ import annotations
 
 import contextlib
-import time
 from typing import Any
 
+from pytheum.api._bounded_cache import BoundedTTLCache
 from pytheum.api.params import (
     book_from_payload,
     implied_yes_from_payload,
@@ -57,7 +57,10 @@ from pytheum.api.params import (
 # successful real (non-degraded) results are cached — never the degraded
 # equivalence-unavailable body.
 _MATCHED_CACHE_TTL_S = 20.0
-_matched_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+# Bounded so high-cardinality param-combos can't grow the cache unbounded
+# (TTL purge on read + oldest-eviction on write).
+_MATCHED_CACHE_MAXSIZE = 512
+_matched_cache = BoundedTTLCache(ttl_s=_MATCHED_CACHE_TTL_S, maxsize=_MATCHED_CACHE_MAXSIZE)
 
 
 def _parse_offset(query: dict[str, str]) -> int:
@@ -290,13 +293,10 @@ async def handle_markets_matched(
         f"|league={league_filter or ''}"
         f"|date={date_filter or ''}"
     )
-    hit = _matched_cache.get(cache_key)
-    if (
-        not force_refresh
-        and hit is not None
-        and time.monotonic() - hit[0] < _MATCHED_CACHE_TTL_S
-    ):
-        return 200, hit[1]
+    if not force_refresh:
+        hit = _matched_cache.get(cache_key)
+        if hit is not None:
+            return 200, hit
 
     # When fungible_only or min_vol is active we need the full filtered list to
     # paginate and count excluded; over-fetch with no internal limit cap.
@@ -457,5 +457,5 @@ async def handle_markets_matched(
     # file missing / load error) reflects a transient boot/load problem we don't
     # want to pin for the TTL once the index recovers.
     if not meta.get("degraded"):
-        _matched_cache[cache_key] = (time.monotonic(), body)
+        _matched_cache.set(cache_key, body)
     return 200, body

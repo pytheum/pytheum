@@ -16,9 +16,9 @@ GET /v1/markets/{ref}/equivalents
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any
 
+from pytheum.api._bounded_cache import BoundedTTLCache
 from pytheum.api.annotators import attach_quote_staleness
 from pytheum.api.params import (
     book_from_payload,
@@ -78,7 +78,11 @@ _MIN_CANDIDATES = 500
 _CACHE_TTL_S = 180.0
 _WARM_INTERVAL_S = 60.0
 _WARM_KEYS = ("150", "50")  # t_find_divergences fetch + endpoint default
-_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+# Bounded: keys are low-cardinality (limit:fungible:rules:status combos) but the
+# bodies can be large, so a hard cap (+ TTL purge on read / oldest-eviction on
+# write) keeps memory bounded regardless of key churn.
+_CACHE_MAXSIZE = 256
+_cache = BoundedTTLCache(ttl_s=_CACHE_TTL_S, maxsize=_CACHE_MAXSIZE)
 
 
 # ---------------------------------------------------------------------------
@@ -251,9 +255,10 @@ async def handle_markets_equivalents(
                      + ", ".join(_VALID_STATUSES)
         }
     cache_key = f"{limit}:{fungible_only}:{include_rules}:{status}"
-    hit = _cache.get(cache_key)
-    if not force_refresh and hit is not None and time.monotonic() - hit[0] < _CACHE_TTL_S:
-        return 200, hit[1]
+    if not force_refresh:
+        hit = _cache.get(cache_key)
+        if hit is not None:
+            return 200, hit
 
     # Lazy-load the equivalence singleton when not injected (same pattern as
     # handle_markets_matched / handle_market_rules / handle_status).  The
@@ -354,7 +359,7 @@ async def handle_markets_equivalents(
             "source": "pytheum-cross-venue-matcher gold set (pre-decided pairs)",
         },
     }
-    _cache[cache_key] = (time.monotonic(), body)
+    _cache.set(cache_key, body)
     return 200, body
 
 

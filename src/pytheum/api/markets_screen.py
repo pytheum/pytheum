@@ -8,10 +8,10 @@ triage edge + tradeability without a follow-up /context call.
 """
 from __future__ import annotations
 
-import time
 from datetime import UTC, datetime
 from typing import Any
 
+from pytheum.api._bounded_cache import BoundedTTLCache
 from pytheum.api.annotators import (
     attach_cross_venue,
     attach_moves,
@@ -55,7 +55,11 @@ _BUNDLE_OUTCOMES_LIMIT = 5
 # successful real (dao-backed) results are cached — never the dao=None
 # degraded body.
 _SCREEN_CACHE_TTL_S = 20.0
-_screen_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+# Bounded so high-cardinality param-combos can't grow the cache unbounded
+# (TTL purge on read + oldest-eviction on write). maxsize sized for the realistic
+# distinct-param-combo working set on a browse surface.
+_SCREEN_CACHE_MAXSIZE = 512
+_screen_cache = BoundedTTLCache(ttl_s=_SCREEN_CACHE_TTL_S, maxsize=_SCREEN_CACHE_MAXSIZE)
 
 
 def _num(v: str | None) -> float | None:
@@ -185,9 +189,10 @@ async def handle_markets_screen(
         f"|resolves_before={resolves_before.isoformat() if resolves_before else ''}"
         f"|resolves_after={resolves_after.isoformat() if resolves_after else ''}"
     )
-    hit = _screen_cache.get(cache_key)
-    if not force_refresh and hit is not None and time.monotonic() - hit[0] < _SCREEN_CACHE_TTL_S:
-        return 200, hit[1]
+    if not force_refresh:
+        hit = _screen_cache.get(cache_key)
+        if hit is not None:
+            return 200, hit
 
     move_sort = sort_by == "move"
     rows = await dao.screen_markets(
@@ -287,5 +292,5 @@ async def handle_markets_screen(
             "deduped": pre_dedup - len(markets),
         },
     }
-    _screen_cache[cache_key] = (time.monotonic(), body)
+    _screen_cache.set(cache_key, body)
     return 200, body
