@@ -56,13 +56,17 @@ _OVERFETCH_FACTOR = 4
 _MAX_CANDIDATES = 500
 # Floor on the hydration set regardless of `limit`.  A small `limit` would
 # otherwise hydrate only the un-ingested/one-sided soonest front and surface few
-# complete pairs.  Kept modest (NOT raised to _MAX_CANDIDATES): the box is
-# CPU/memory-constrained (pit OOM-restarts near its 2 GB cgroup cap), and
-# hydrating 500 on every default page — incl. the warm loop's 60s refresh of
-# both the 50 and 150 keys — was pure load on a 97%-CPU box for cosmetic default
-# richness.  The scanner key (limit=150) still hydrates up to _MAX_CANDIDATES;
-# the default (50) stays light.  Restore to 500 once the box is rightsized.
-_MIN_CANDIDATES = 150
+# complete pairs — the gold set is liveness-ordered and its recent front is
+# heavily un-hydratable (PM legs not yet in the markets table), so a shallow
+# scan starves the page (measured: default limit=50 returned count=1 at floor
+# 150 while the limit=150 scanner returned 28).  Raised 150 → 500 (= _MAX_CANDIDATES)
+# on 2026-06-24 once the box was rightsized t3.large → m6i.xlarge (4 vCPU / 16 GB,
+# swap-thrash gone): the default page now hydrates to scanner depth so it reaches
+# the live both-priced pairs past the front.  Hydration is still 2 batched queries
+# over the candidate id set; affordable on the bigger box's warm-loop 60s refresh.
+# (Root cure for the un-hydratable front is ingest coverage — ali/matcher; this
+# is the serving-side mitigation.)
+_MIN_CANDIDATES = 500
 
 # The pairs join (136k equivalence rows x markets) plus the 300-id staleness
 # window run ~20s on the shared-compute DB — past the MCP transport's patience
