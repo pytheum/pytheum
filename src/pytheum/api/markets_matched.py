@@ -36,6 +36,7 @@ offset : int, default 0
 from __future__ import annotations
 
 import contextlib
+import time
 from typing import Any
 
 from pytheum.api.params import (
@@ -44,6 +45,19 @@ from pytheum.api.params import (
     locked_arb_net_edge,
     parse_limit,
 )
+
+# Short-TTL param-keyed response cache (mirrors markets_screen._screen_cache).
+# A load test showed /v1/markets/matched is a concurrency cliff: p50
+# 156ms -> 789ms -> 1978ms (p95 3710ms) as concurrency goes 1->10->25 because
+# every request runs a live fetch_markets_by_ids over the page's leg ids (the
+# same uncached-DB pattern /screen and /equivalents had). Matched pairs are a
+# slow-moving, settlement-verified cross-venue collection hydrated with live
+# quotes, so 20s staleness is fine for this browse surface and caching repeated
+# param-combos flattens the curve for exactly the bursts that saturate it. Only
+# successful real (non-degraded) results are cached — never the degraded
+# equivalence-unavailable body.
+_MATCHED_CACHE_TTL_S = 20.0
+_matched_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def _parse_offset(query: dict[str, str]) -> int:
@@ -226,6 +240,7 @@ async def handle_markets_matched(
     *,
     dao: Any,
     equivalence: Any = None,
+    force_refresh: bool = False,
 ) -> tuple[int, dict[str, Any]]:
     """GET /v1/markets/matched handler.
 
@@ -256,6 +271,32 @@ async def handle_markets_matched(
     query_substr = query.get("q") or None
     league_filter = _parse_league(query)
     date_filter = _parse_game_date(query)
+
+    # Param-keyed cache check (after parse so the key reflects NORMALIZED values:
+    # the bet_type/bet_types alias collapses to one sorted concrete set, sort_by
+    # falls back, dates parse the same, fungible_only/min_volume normalize). Built
+    # from every param that shapes the result so two requests with different
+    # params never collide and two identical requests hit. The bet_types set is
+    # sorted so member-order doesn't fork the key. Only successful non-degraded
+    # bodies are stored below (see the file_missing/load_error guard before set).
+    cache_key = (
+        f"limit={limit}"
+        f"|offset={offset}"
+        f"|min_volume={min_vol}"
+        f"|sort_by={sort_by}"
+        f"|fungible_only={fungible_only}"
+        f"|bet_types={','.join(sorted(bet_types_filter)) if bet_types_filter else ''}"
+        f"|q={query_substr or ''}"
+        f"|league={league_filter or ''}"
+        f"|date={date_filter or ''}"
+    )
+    hit = _matched_cache.get(cache_key)
+    if (
+        not force_refresh
+        and hit is not None
+        and time.monotonic() - hit[0] < _MATCHED_CACHE_TTL_S
+    ):
+        return 200, hit[1]
 
     # When fungible_only or min_vol is active we need the full filtered list to
     # paginate and count excluded; over-fetch with no internal limit cap.
@@ -407,8 +448,14 @@ async def handle_markets_matched(
         meta["degraded"] = True
         meta["degraded_reason"] = equivalence.load_error
 
-    return 200, {
+    body = {
         "pairs": pairs,
         "total": total_filtered,
         "meta": meta,
     }
+    # Only cache successful, non-degraded results — a degraded body (equivalence
+    # file missing / load error) reflects a transient boot/load problem we don't
+    # want to pin for the TTL once the index recovers.
+    if not meta.get("degraded"):
+        _matched_cache[cache_key] = (time.monotonic(), body)
+    return 200, body

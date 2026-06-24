@@ -25,3 +25,17 @@ def _clear_screen_cache():
     from pytheum.api.markets_screen import _screen_cache
     _screen_cache.clear()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_matched_cache():
+    """Isolate the module-level /v1/markets/matched response cache between tests.
+
+    handle_markets_matched now memoizes successful results in a process-wide
+    param-keyed cache (mirrors markets_screen._screen_cache). Many matched tests
+    call with the same default params but distinct fake DAOs/indices, so without
+    a reset the second test would hit the first's cached body. Cleared before
+    each test so every test sees a cold cache."""
+    from pytheum.api.markets_matched import _matched_cache
+    _matched_cache.clear()
+    yield
