@@ -101,3 +101,40 @@ async def test_self_oriented_pass_fetches_subset_and_merges_far_arb(monkeypatch)
     assert any(c and "event" in c and "house_party" in c for c in calls), calls
     # and the far self-oriented arb surfaced (merged in from that pass)
     assert len(out.get("divergences", [])) == 1, out
+
+
+def _single_pair(monkeypatch, pair):
+    async def _g(path, params, base_url):  # noqa: ANN001
+        # main pass returns the pair; self-oriented pass empty (avoid double-count)
+        return {"pairs": [pair]} if not params.get("bet_type") else {"pairs": []}
+    monkeypatch.setattr(tools, "_get", _g)
+
+
+async def test_false_extreme_pinned_leg_excluded(monkeypatch) -> None:
+    """A leg pinned near 1.0 with a large edge (near-resolved/stale, not lockable) is excluded —
+    the Senate-pair false arb ali flagged (PM 1.0 / Kalshi 0.013, 131d out)."""
+    _single_pair(monkeypatch, {
+        "bet_type": "event", "poly_side": None, "method": "blocked_deterministic", "confidence": 0.7,
+        "a": {"id": "kalshi:KXSENATEKSD", "venue": "kalshi", "question": "Will the Dem win KS Senate?",
+              "implied_yes": 0.013, "days_to_resolution": 131, "book": {"bid": 0.01, "ask": 0.016}},
+        "b": {"id": "polymarket:918307", "venue": "polymarket", "question": "Will the Dem win KS Senate?",
+              "implied_yes": 1.0, "days_to_resolution": 131, "book": {"bid": 0.999, "ask": 1.0}},
+    })
+    out = await find_divergences(min_net_edge=-1.0, limit=10, include_rules=False)
+    assert out.get("extreme_excluded", 0) >= 1, out
+    assert len(out.get("divergences", [])) == 0, out
+
+
+async def test_moderate_two_sided_divergence_passes(monkeypatch) -> None:
+    """A moderate divergence with NO extreme leg (both legs mid-range) is the legit kind and
+    must NOT be caught by the extreme guard — the KXCO8D-class real arb ali contrasted."""
+    _single_pair(monkeypatch, {
+        "bet_type": "event", "poly_side": None, "method": "structured_key", "confidence": 1.0,
+        "a": {"id": "kalshi:KXCO8D", "venue": "kalshi", "question": "Will X happen?",
+              "implied_yes": 0.55, "days_to_resolution": 5, "book": {"bid": 0.54, "ask": 0.56}},
+        "b": {"id": "polymarket:704026", "venue": "polymarket", "question": "Will X happen?",
+              "implied_yes": 0.25, "days_to_resolution": 5, "book": {"bid": 0.24, "ask": 0.26}},
+    })
+    out = await find_divergences(min_net_edge=-1.0, limit=10, include_rules=False)
+    assert out.get("extreme_excluded", 0) == 0, out
+    assert len(out.get("divergences", [])) == 1, out
