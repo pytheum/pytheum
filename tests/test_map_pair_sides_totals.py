@@ -6,7 +6,30 @@ edge, so anything ambiguous stays unmapped. (Team-token pick_side stays for mone
 """
 from __future__ import annotations
 
-from scripts.map_pair_sides import _direction, pick_side, pick_total_side
+from scripts.map_pair_sides import (
+    _direction,
+    _yes_team_from_title,
+    pick_side,
+    pick_total_side,
+)
+
+
+def test_yes_team_from_title_extracts_only_the_yes_side() -> None:
+    # 'Will X win the A vs B match?' -> X only (the full title names both -> ambiguous).
+    assert _yes_team_from_title(
+        "Will Enterprise Esports win the Barça eSports vs. Enterprise Esports match?"
+    ) == "Enterprise Esports"
+    assert _yes_team_from_title(
+        "Will NAVI Junior win the Beşiktaş Esports vs. NAVI Junior Valorant match?"
+    ) == "NAVI Junior"
+    assert _yes_team_from_title("New York Y vs Detroit Total Runs?") is None  # not a 'Will X win'
+    assert _yes_team_from_title(None) is None
+
+
+def test_parsed_yes_team_orients_the_esports_front() -> None:
+    yes = _yes_team_from_title("Will REBORN win the Ghools Esports vs. REBORN match?")
+    assert yes == "REBORN"
+    assert pick_side(yes, ["Ghools Esports", "REBORN"]) == 1  # unambiguous on the YES team alone
 
 
 def test_direction_parse() -> None:
