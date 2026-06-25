@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS pair_side_map (
 """
 
 _TARGETS = """
-SELECT e.kalshi_market_id, e.polymarket_market_id, pa.payload
+SELECT e.kalshi_market_id, e.polymarket_market_id, e.bet_type, pa.payload
 FROM market_equivalence e
 JOIN markets ka ON ka.id = e.kalshi_market_id {active_clause}
 JOIN markets pa ON pa.id = e.polymarket_market_id
@@ -60,14 +60,46 @@ WHERE e.polymarket_market_id IS NOT NULL
   AND ps.kalshi_market_id IS NULL
 """
 
-# Side-mappable bet types: the proposition must be "this side WINS outright"
-# for team/player token matching to be sound. Spreads/totals/props embed
-# numbers in the proposition ('Belgium wins by over 1.5 goals') — the sanity
-# check showed team-token mapping mis-orients those, so they stay unmapped
-# until a proposition-aware mapper exists.
+# Team/player-token mappable: the proposition is "this side WINS outright", so
+# team-token overlap between Kalshi's yes_sub_title and Gamma's outcomes is sound.
 _MAPPABLE_BET_TYPES = [
     "moneyline", "moneyline_outcome", "tennis_ml", "esports_series", "esports_map",
 ]
+
+# Over/Under (total) families: the proposition is directional, not team-named — the
+# Kalshi total YES side is "over/under the threshold" and PM lists explicit Over/Under
+# outcomes (line already matched by the matcher). Oriented by DIRECTION via pick_total_side
+# (the proposition-aware mapper the old comment said was needed). Spreads stay out — they're
+# directional AND team-named (a proposition-aware spread mapper is a further step).
+_TOTAL_BET_TYPES = [
+    "total", "total_1h", "team_total", "tennis_total", "esports_total", "wc_2h_total",
+]
+
+
+def _direction(text: str) -> str | None:
+    """'over'/'under' parsed from a side/outcome string; None if neither is present."""
+    s = (text or "").lower()
+    if any(w in s for w in ("under", "below", "fewer", "less than", "or fewer", "or less")):
+        return "under"
+    if any(w in s for w in ("over", "above", "more than", "at least", "or more", "greater")):
+        return "over"
+    return None
+
+
+def pick_total_side(kalshi_side: str, outcomes: list[str]) -> int | None:
+    """Orient an over/under total: the Kalshi YES side's direction maps to the PM outcome
+    of the SAME direction. Conservative — requires an explicit direction on the Kalshi side
+    AND a unique PM outcome of that direction AND the opposite PM outcome present; otherwise
+    None (never assume — a wrong total orientation INVERTS the edge, worse than unmapped)."""
+    kdir = _direction(kalshi_side)
+    if kdir is None:
+        return None
+    dirs = [_direction(o) for o in outcomes]
+    matches = [i for i, d in enumerate(dirs) if d == kdir]
+    opp = "under" if kdir == "over" else "over"
+    if len(matches) != 1 or opp not in dirs:
+        return None
+    return matches[0]
 
 
 def _tokens(s: str) -> list[str]:
@@ -118,7 +150,7 @@ async def run(*, scope_all: bool, limit: int | None) -> None:
         q = _TARGETS.format(active_clause="" if scope_all else "AND ka.status = 'active'")
         if limit:
             q += f" LIMIT {int(limit)}"
-        targets = await con.fetch(q, _MAPPABLE_BET_TYPES)
+        targets = await con.fetch(q, _MAPPABLE_BET_TYPES + _TOTAL_BET_TYPES)
         print(f"mapping sides for {len(targets)} pairs")
 
         # Poly outcomes — payload first, Gamma fallback for pre-existing rows.
@@ -176,11 +208,13 @@ async def run(*, scope_all: bool, limit: int | None) -> None:
             if not name or not outs:
                 missing += 1
                 continue
-            side = pick_side(name, outs)
+            is_total = t["bet_type"] in _TOTAL_BET_TYPES
+            side = pick_total_side(name, outs) if is_total else pick_side(name, outs)
             if side is None:
                 ambiguous += 1
                 continue
-            rows.append((kid, pid, side, outs[side], name, "token_subtitle"))
+            method = "total_overunder" if is_total else "token_subtitle"
+            rows.append((kid, pid, side, outs[side], name, method))
         if rows:
             await con.executemany(
                 "INSERT INTO pair_side_map (kalshi_market_id, polymarket_market_id, "
