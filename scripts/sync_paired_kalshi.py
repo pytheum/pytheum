@@ -197,6 +197,31 @@ def _load_export_rows(export_path: str, ids: set[str], today: str,
     return out
 
 
+def _live_kalshi_refs(export_path: str, min_date: str | None) -> list[str]:
+    """Unique kalshi_refs in the export whose EFFECTIVE date (game_date else resolution_date) is
+    >= min_date (live). The export-driven missing-determination: the same fix applied to
+    sync_paired_polymarket — decoupled from the stale ``market_equivalence`` table (loaded once;
+    its slug-resolution lands NULL for the recent front, so it under-reports what's missing). We
+    ask the export — the current source of truth — which Kalshi legs SHOULD exist, then the DB
+    which are present; the difference is the real missing set, including the recent front."""
+    seen: dict[str, None] = {}  # dedup, preserve first-seen order
+    with gzip.open(export_path, "rt", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            ref = r.get("kalshi_ref")
+            if not ref or not ref.startswith("kalshi:") or ref in seen:
+                continue
+            if min_date:
+                eff = (_effective_date(r.get("game_date"), r.get("resolution_date")) or "")[:10]
+                if not eff or eff < min_date:  # undated or past-event → skip in live-only
+                    continue
+            seen[ref] = None
+    return list(seen)
+
+
 async def run(*, source_db: str | None, from_export: str | None, today: str,
               min_resolution_date: str | None, write: bool, limit: int | None) -> None:
     import asyncpg
@@ -205,8 +230,18 @@ async def run(*, source_db: str | None, from_export: str | None, today: str,
     con = await asyncpg.connect(_db_url(), statement_cache_size=0)
     try:
         await con.execute("SET statement_timeout = 0")
-        q = _MISSING_QUERY + (f" LIMIT {int(limit)}" if limit else "")
-        missing = [r["kalshi_market_id"] for r in await con.fetch(q)]
+        if from_export:
+            # Export-driven (preferred): what SHOULD exist (live export refs) minus what's present
+            # in markets. Bypasses the stale market_equivalence table that under-reports the front.
+            want = _live_kalshi_refs(from_export, min_resolution_date)
+            present = {r["id"] for r in await con.fetch(
+                "SELECT id FROM markets WHERE id = ANY($1::text[])", want)}
+            missing = [r for r in want if r not in present]
+            if limit:
+                missing = missing[:int(limit)]
+        else:
+            q = _MISSING_QUERY + (f" LIMIT {int(limit)}" if limit else "")
+            missing = [r["kalshi_market_id"] for r in await con.fetch(q)]
         scope = (f"live-only (effective date [game_date else resolution_date] >= "
                  f"{min_resolution_date})" if min_resolution_date
                  else "ALL (incl. historical/closed)")

@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 from scripts.sync_paired_kalshi import (
+    _live_kalshi_refs,
     _load_export_rows,
     export_row_to_market,
     kalshi_row_to_market,
@@ -117,3 +118,21 @@ def test_load_export_rows_live_only_uses_game_date(tmp_path: Path) -> None:
                                      "kalshi:UNDATED"}, "2026-06-23", "2026-06-23")
     # PASTGAME excluded (game_date past despite lagged resolution); UNDATED excluded.
     assert set(out) == {"kalshi:LIVE", "kalshi:EVENT"}
+
+
+def test_live_kalshi_refs_dedups_and_filters_live(tmp_path: Path) -> None:
+    # The export-driven missing-determination: which Kalshi legs SHOULD exist (live), deduped,
+    # decoupled from the stale market_equivalence table.
+    p = tmp_path / "exp.jsonl.gz"
+    with gzip.open(p, "wt", encoding="utf-8") as fh:
+        fh.write(json.dumps({"kalshi_ref": "kalshi:A", "game_date": "2026-06-30",
+                             "resolution_date": "2026-06-30"}) + "\n")
+        fh.write(json.dumps({"kalshi_ref": "kalshi:A", "game_date": "2026-06-30"}) + "\n")  # dup
+        fh.write(json.dumps({"kalshi_ref": "kalshi:PAST", "resolution_date": "2026-01-01"}) + "\n")
+        fh.write(json.dumps({"kalshi_ref": "kalshi:UNDATED"}) + "\n")
+        fh.write(json.dumps({"kalshi_ref": "polymarket:1", "game_date": "2026-06-30"}) + "\n")  # not kalshi
+        fh.write(json.dumps({"pm_ref": "polymarket:2"}) + "\n")  # no kalshi_ref
+    # live-only as of 2026-06-23: only the future-dated kalshi ref, deduped to one.
+    assert _live_kalshi_refs(str(p), "2026-06-23") == ["kalshi:A"]
+    # no min_date: all valid kalshi refs (deduped, first-seen order); past + undated included.
+    assert _live_kalshi_refs(str(p), None) == ["kalshi:A", "kalshi:PAST", "kalshi:UNDATED"]
