@@ -183,6 +183,13 @@ def _index_rows_to_pairs(
             "bet_type": row.get("bet_type"),
             "poly_side": None,
             "poly_outcome": None,
+            # Export titles + matched line — used by orient-at-serve. They're the matcher's clean
+            # strings (parse 100% of spreads), unlike the hydrated leg's markets.question which can
+            # differ (e.g. a spread leg's question isn't the 'Spread: <team> (-N)' shape). Not
+            # emitted in the response (a/b legs carry the displayed titles); orientation-only.
+            "kalshi_title": row.get("kalshi_title"),
+            "pm_title": row.get("pm_title"),
+            "line": row.get("line"),
         })
         if len(pairs) >= limit:
             break
@@ -358,9 +365,13 @@ async def handle_markets_equivalents(
         poly_side = p.get("poly_side")
         poly_outcome = p.get("poly_outcome")
         if poly_side is None:
+            # Prefer the matcher's export titles + line over the hydrated leg's markets.question
+            # (which can differ from the clean matched title — esp. for spreads); fall back to the
+            # leg question when the export field is absent (e.g. the DAO pair source).
             poly_side, poly_outcome = orient_pair(
-                p.get("bet_type"), a.get("question"),
-                pm_outcomes.get(p["polymarket_market_id"]), pm_title=b.get("question"))
+                p.get("bet_type"), p.get("kalshi_title") or a.get("question"),
+                pm_outcomes.get(p["polymarket_market_id"]),
+                pm_title=p.get("pm_title") or b.get("question"), line=p.get("line"))
         out.append({
             "method": p.get("method"),
             "confidence": p.get("confidence"),

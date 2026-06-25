@@ -103,6 +103,22 @@ def test_orient_pair_spread_uses_pm_title() -> None:
     assert orient_pair("spread", "France wins by more than 1.5 goals?", ["France", "Iraq"]) == (None, None)
 
 
+def test_pick_spread_side_uses_matched_line_when_pm_title_lacks_it() -> None:
+    # orient-at-serve threads the matcher's export `line`; the hydrated PM leg's markets.question
+    # may NOT be the 'Spread: <team> (-N)' shape (the box mismatch that left spreads unoriented),
+    # so the line param must orient without a parseable pm_title.
+    assert pick_spread_side("Argentina by over 2.5 goals?", "Argentina vs Brazil",
+                            ["Argentina", "Brazil"], line=2.5) == 0
+    # the matched line still has to agree with the Kalshi-title line (verify, never assume)
+    assert pick_spread_side("Argentina by over 2.5 goals?", "Argentina vs Brazil",
+                            ["Argentina", "Brazil"], line=1.5) is None
+
+
+def test_orient_pair_spread_with_matched_line() -> None:
+    assert orient_pair("spread", "France wins by more than 1.5 goals?", ["France", "Iraq"],
+                       pm_title="France vs Iraq", line=1.5) == (0, "France")
+
+
 def test_orient_pair_conservative_and_scoped() -> None:
     # non-orientable bet type -> (None, None)
     assert orient_pair("event", "Will X win?", ["Yes", "No"]) == (None, None)
