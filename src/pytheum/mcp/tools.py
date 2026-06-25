@@ -1,6 +1,7 @@
 """Thin wrappers around the REST endpoints. Each function is one tool."""
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import os
 import re
@@ -1305,6 +1306,21 @@ _SELF_ORIENTED_BET_TYPES = frozenset({"event", "house_party"})
 # AND a manual pull. They score + rank fine once seen; the only gate was scan breadth.
 _DIVERGENCE_SCAN_BREADTH = 500
 
+# Dedicated past-cap fetches for the divergence scanner. Bet-type families that resolve 1-2 days
+# out get crowded OUT of the soonest-N candidate window by the same-day event/esports/crypto front,
+# so they never reach the scan on their own — ali found 69 live spread pairs, 0 surfaced, with
+# orientation_excluded flat (the tell: they weren't reaching the orient logic at all). Each family
+# is fetched SEPARATELY (the endpoint's bet_type filter scans the full corpus for the subset) so
+# cross-family crowding can't bury one; orient-at-serve then orients the side-mapped ones. Moneyline
+# / esports families are same-day and already populate the main soonest-N window, so they're not
+# here. event/house_party are self-oriented (the original PR#35 pass); spread + game/tennis totals
+# are side-mapped and were the ones being starved.
+_DEDICATED_BET_TYPE_FETCHES = (
+    ",".join(sorted(_SELF_ORIENTED_BET_TYPES)),
+    "spread",
+    "total,total_1h,team_total,tennis_total,wc_2h_total",
+)
+
 # False-extreme guard: a leg pinned at a price extreme (>=0.97 or <=0.03) that produces a LARGE
 # net edge is the near-resolved / stale-leg signature — one venue is settled-but-unresolved or
 # mispriced on a thin book (e.g. a Senate pair at PM 1.0 / Kalshi 0.013, 131d out, $457 vol) —
@@ -1367,20 +1383,25 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
                 "hint": "the verified-pair endpoint failed; retry, or fall back to "
                         "t_screen + t_market_context sibling_markets for a manual "
                         "cross-venue read."}
-    # Self-oriented pass: the window above is soonest-first, dominated by the perishable daily
-    # front; the self-oriented binary arbs (event/house_party — elections/House) resolve far out,
-    # so they sit past the candidate cap and never reach the scan (the live 4% NHL-draft arb did).
-    # Fetch that bet-type subset explicitly (the endpoint scans the full corpus for it) and merge,
-    # deduped by leg ids, so those arbs surface + rank with the rest. Best-effort — a failure here
-    # never sinks the main scan.
-    _so_params = {**_eq_params, "bet_type": ",".join(sorted(_SELF_ORIENTED_BET_TYPES))}
-    so_resp = await _get("/v1/markets/equivalents", _so_params, base_url)
+    # Dedicated past-cap fetches: the window above is soonest-first, dominated by the same-day
+    # event/esports/crypto front, so families resolving 1-2 days out (self-oriented binaries AND
+    # side-mapped spreads/totals) get crowded past the candidate cap and never reach the scan
+    # (ali: 69 live spreads, 0 surfaced). Fetch each crowded family SEPARATELY (the endpoint's
+    # bet_type filter scans the full corpus for the subset), concurrently, then merge — deduped
+    # by leg ids — so each surfaces + (for side-mapped) gets oriented at serve. Best-effort: a
+    # failed sub-fetch contributes nothing and never sinks the main scan.
+    extra = await asyncio.gather(*(
+        _get("/v1/markets/equivalents", {**_eq_params, "bet_type": bt}, base_url)
+        for bt in _DEDICATED_BET_TYPE_FETCHES), return_exceptions=True)
     seen_ids = {((p.get("a") or {}).get("id"), (p.get("b") or {}).get("id")) for p in pairs}
-    for sp in (so_resp.get("pairs") or []):
-        key = ((sp.get("a") or {}).get("id"), (sp.get("b") or {}).get("id"))
-        if key not in seen_ids:
-            seen_ids.add(key)
-            pairs.append(sp)
+    for r in extra:
+        if not isinstance(r, dict):
+            continue  # a sub-fetch raised — skip it, keep the rest
+        for sp in (r.get("pairs") or []):
+            key = ((sp.get("a") or {}).get("id"), (sp.get("b") or {}).get("id"))
+            if key not in seen_ids:
+                seen_ids.add(key)
+                pairs.append(sp)
     out: list[dict[str, Any]] = []
     orientation_excluded = 0
     parked_excluded = 0
