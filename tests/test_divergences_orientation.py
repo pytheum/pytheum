@@ -97,9 +97,13 @@ async def test_self_oriented_pass_fetches_subset_and_merges_far_arb(monkeypatch)
 
     monkeypatch.setattr(tools, "_get", _fake_get)
     out = await find_divergences(min_net_edge=-1.0, limit=10, include_rules=False)
-    # a second fetch fired, scoped to the self-oriented bet types
-    assert any(c and "event" in c and "house_party" in c for c in calls), calls
-    # and the far self-oriented arb surfaced (merged in from that pass)
+    bt_calls = [c for c in calls if c]
+    # dedicated past-cap fetches fire for each crowded family so none is starved by the soonest-N
+    # window: self-oriented binaries AND the side-mapped spread/total families (ali's 69 spreads).
+    assert any("event" in c and "house_party" in c for c in bt_calls), calls   # self-oriented
+    assert "spread" in bt_calls, calls                                          # side-mapped spreads
+    assert any(c.startswith("total") for c in bt_calls), calls                  # side-mapped totals
+    # the far arb surfaced (merged from a dedicated pass; deduped across passes)
     assert len(out.get("divergences", [])) == 1, out
 
 
