@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS pair_side_map (
 """
 
 _TARGETS = """
-SELECT e.kalshi_market_id, e.polymarket_market_id, e.bet_type, pa.payload
+SELECT e.kalshi_market_id, e.polymarket_market_id, e.bet_type, ka.title AS kalshi_title, pa.payload
 FROM market_equivalence e
 JOIN markets ka ON ka.id = e.kalshi_market_id {active_clause}
 JOIN markets pa ON pa.id = e.polymarket_market_id
@@ -100,6 +100,21 @@ def pick_total_side(kalshi_side: str, outcomes: list[str]) -> int | None:
     if len(matches) != 1 or opp not in dirs:
         return None
     return matches[0]
+
+
+_WIN_TITLE = re.compile(r"\bwill\s+(.+?)\s+win\b", re.IGNORECASE)
+
+
+def _yes_team_from_title(title: str | None) -> str | None:
+    """Extract the YES team from a 'Will <TEAM> win the <A> vs <B> match?' Kalshi title.
+
+    The live yes_sub_title is flaky/empty for esports (rate-limited fetch), and the FULL
+    title names BOTH teams so token-overlap is ambiguous. 'Will X win' names only the YES
+    side — fetch-free (title is already in `markets`) and unambiguous. None if it doesn't match."""
+    if not title:
+        return None
+    m = _WIN_TITLE.search(title)
+    return m.group(1).strip() if m else None
 
 
 def _tokens(s: str) -> list[str]:
@@ -203,17 +218,23 @@ async def run(*, scope_all: bool, limit: int | None) -> None:
         missing = 0
         for t in targets:
             kid, pid = t["kalshi_market_id"], t["polymarket_market_id"]
-            name = side_names.get(kid)
             outs = outcomes.get(pid)
+            is_total = t["bet_type"] in _TOTAL_BET_TYPES
+            # Moneyline YES side: prefer 'Will X win' parsed from the DB-resident Kalshi title
+            # (fetch-free + names ONLY the YES team, disambiguating the 'A vs B' full-title case
+            # that left esports unmapped); fall back to the live yes_sub_title. Totals use the
+            # yes_sub_title direction (pick_total_side).
+            yes_from_title = None if is_total else _yes_team_from_title(t["kalshi_title"])
+            name = side_names.get(kid) if is_total else (yes_from_title or side_names.get(kid))
             if not name or not outs:
                 missing += 1
                 continue
-            is_total = t["bet_type"] in _TOTAL_BET_TYPES
             side = pick_total_side(name, outs) if is_total else pick_side(name, outs)
             if side is None:
                 ambiguous += 1
                 continue
-            method = "total_overunder" if is_total else "token_subtitle"
+            method = ("total_overunder" if is_total
+                      else "title_win" if yes_from_title else "token_subtitle")
             rows.append((kid, pid, side, outs[side], name, method))
         if rows:
             await con.executemany(
