@@ -39,12 +39,14 @@ def _effective_date(game_date: str | None, resolution_date: str | None) -> str |
     return game_date or resolution_date
 
 
-def _live_pm_refs(export_path: str, min_date: str) -> set[str]:
-    """pm_refs from the export whose pair's effective date is on/after min_date.
+def _live_pm_refs(export_path: str, min_date: str | None) -> set[str]:
+    """pm_refs (polymarket:<gamma>) from the export; if min_date is set, only pairs whose
+    effective date (game_date else resolution_date) is on/after it.
 
-    Scopes the PM backfill to the genuinely-live front (~recent gamma) instead of fetching
-    ~100k historical legs — the same live-only scope the Kalshi backfill uses."""
-    live: set[str] = set()
+    These gamma ids are the EXPORT's own — present for the recent front that the table's
+    slug-resolution can't reach — so the backfill uses them directly (export-driven),
+    decoupled from the stale market_equivalence table. min_date=None returns every pm_ref."""
+    refs: set[str] = set()
     with gzip.open(export_path, "rt", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -54,10 +56,12 @@ def _live_pm_refs(export_path: str, min_date: str) -> set[str]:
             ref = r.get("pm_ref")
             if not ref:
                 continue
-            eff = (_effective_date(r.get("game_date"), r.get("resolution_date")) or "")[:10]
-            if eff and eff >= min_date:
-                live.add(ref)
-    return live
+            if min_date is not None:
+                eff = (_effective_date(r.get("game_date"), r.get("resolution_date")) or "")[:10]
+                if not eff or eff < min_date:
+                    continue
+            refs.add(ref)
+    return refs
 
 _MISSING_QUERY = """
 SELECT DISTINCT e.polymarket_market_id
@@ -139,17 +143,22 @@ async def run(*, limit: int | None, refresh: bool, from_export: str | None,
     con = await asyncpg.connect(_db_url(), statement_cache_size=0)
     try:
         await con.execute("SET statement_timeout = 0")
-        q = _REFRESH_QUERY if refresh else _MISSING_QUERY
-        ids = [r["polymarket_market_id"] for r in await con.fetch(q)]
-
-        # Live-only scope (fill path): keep only legs whose pair is live per the export.
-        scope = "ALL (incl. historical/closed)"
-        if from_export and min_resolution_date and not refresh:
-            live = _live_pm_refs(from_export, min_resolution_date)
-            before = len(ids)
-            ids = [i for i in ids if i in live]
-            scope = (f"live-only (effective date [game_date else resolution_date] >= "
-                     f"{min_resolution_date}): {len(ids)} of {before} missing-PM legs are live")
+        if from_export and not refresh:
+            # Export-driven missing-PM determination (decoupled from the stale
+            # market_equivalence table AND its markets.url slug resolution, which lands NULL
+            # for exactly the recent front we need — chicken-and-egg). The export's pm_ref is
+            # the gamma id directly (present →2.63M front), so: take the export's (live) PM
+            # legs, and the missing set is the ones absent from `markets`.
+            want = _live_pm_refs(from_export, min_resolution_date)
+            present = {r["id"] for r in await con.fetch(
+                "SELECT id FROM markets WHERE id = ANY($1::text[])", list(want))}
+            ids = [r for r in want if r not in present]
+            scope = (f"export-driven{' live-only' if min_resolution_date else ''}: "
+                     f"{len(ids)} missing-PM of {len(want)} export PM legs absent from markets")
+        else:
+            q = _REFRESH_QUERY if refresh else _MISSING_QUERY
+            ids = [r["polymarket_market_id"] for r in await con.fetch(q)]
+            scope = "table-driven refresh" if refresh else "table-driven (market_equivalence)"
         if limit:
             ids = ids[:int(limit)]
 
