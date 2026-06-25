@@ -349,16 +349,18 @@ async def handle_markets_equivalents(
             dropped_one_sided += 1
             continue
         # Orient-at-serve: if the matcher/side-map didn't already set poly_side, derive it
-        # inline from the Kalshi title ('Will X win' → YES team) + the PM outcomes, for the
-        # team/total bet types. This orients the perishable daily front (which resolves before
-        # a pre-computed pair_side_map run can catch it) without a stored table — fresh every
-        # request. Conservative (orient_pair returns None on any ambiguity), and ADDITIVE: it
-        # only fills a null poly_side, never overrides an existing one, so it can't invert.
+        # inline from the Kalshi title ('Will X win' → YES team, or '<team> wins by more than N'
+        # for spreads) + the PM outcomes/title, for the team/total/spread bet types. This orients
+        # the perishable daily front (which resolves before a pre-computed pair_side_map run can
+        # catch it) without a stored table — fresh every request. Conservative (orient_pair
+        # returns None on any ambiguity), and ADDITIVE: it only fills a null poly_side, never
+        # overrides an existing one, so it can't invert.
         poly_side = p.get("poly_side")
         poly_outcome = p.get("poly_outcome")
         if poly_side is None:
             poly_side, poly_outcome = orient_pair(
-                p.get("bet_type"), a.get("question"), pm_outcomes.get(p["polymarket_market_id"]))
+                p.get("bet_type"), a.get("question"),
+                pm_outcomes.get(p["polymarket_market_id"]), pm_title=b.get("question"))
         out.append({
             "method": p.get("method"),
             "confidence": p.get("confidence"),

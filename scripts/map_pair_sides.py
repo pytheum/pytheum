@@ -28,6 +28,7 @@ from typing import Any
 import asyncpg
 import httpx
 
+from pytheum.equivalence.orientation import pick_spread_side
 from scripts.load_market_equivalence import _db_url
 
 _KALSHI = "https://api.elections.kalshi.com/trade-api/v2/markets"
@@ -48,7 +49,8 @@ CREATE TABLE IF NOT EXISTS pair_side_map (
 """
 
 _TARGETS = """
-SELECT e.kalshi_market_id, e.polymarket_market_id, e.bet_type, ka.title AS kalshi_title, pa.payload
+SELECT e.kalshi_market_id, e.polymarket_market_id, e.bet_type,
+       ka.title AS kalshi_title, pa.title AS pm_title, pa.payload
 FROM market_equivalence e
 JOIN markets ka ON ka.id = e.kalshi_market_id {active_clause}
 JOIN markets pa ON pa.id = e.polymarket_market_id
@@ -68,12 +70,15 @@ _MAPPABLE_BET_TYPES = [
 
 # Over/Under (total) families: the proposition is directional, not team-named — the
 # Kalshi total YES side is "over/under the threshold" and PM lists explicit Over/Under
-# outcomes (line already matched by the matcher). Oriented by DIRECTION via pick_total_side
-# (the proposition-aware mapper the old comment said was needed). Spreads stay out — they're
-# directional AND team-named (a proposition-aware spread mapper is a further step).
+# outcomes (line already matched by the matcher). Oriented by DIRECTION via pick_total_side.
 _TOTAL_BET_TYPES = [
     "total", "total_1h", "team_total", "tennis_total", "esports_total", "wc_2h_total",
 ]
+
+# Spread families: team-named AND a line. PM spread outcomes are [favorite, underdog] (favorite
+# at index 0) with the line in the title "(-X.5)", not in outcomes. Oriented by pick_spread_side:
+# verify team+line agree, then Kalshi YES ("<team> wins by more than N") -> the favorite outcome.
+_SPREAD_BET_TYPES = ["spread"]
 
 
 def _direction(text: str) -> str | None:
@@ -165,7 +170,7 @@ async def run(*, scope_all: bool, limit: int | None) -> None:
         q = _TARGETS.format(active_clause="" if scope_all else "AND ka.status = 'active'")
         if limit:
             q += f" LIMIT {int(limit)}"
-        targets = await con.fetch(q, _MAPPABLE_BET_TYPES + _TOTAL_BET_TYPES)
+        targets = await con.fetch(q, _MAPPABLE_BET_TYPES + _TOTAL_BET_TYPES + _SPREAD_BET_TYPES)
         print(f"mapping sides for {len(targets)} pairs")
 
         # Poly outcomes — payload first, Gamma fallback for pre-existing rows.
@@ -219,22 +224,34 @@ async def run(*, scope_all: bool, limit: int | None) -> None:
         for t in targets:
             kid, pid = t["kalshi_market_id"], t["polymarket_market_id"]
             outs = outcomes.get(pid)
-            is_total = t["bet_type"] in _TOTAL_BET_TYPES
-            # Moneyline YES side: prefer 'Will X win' parsed from the DB-resident Kalshi title
-            # (fetch-free + names ONLY the YES team, disambiguating the 'A vs B' full-title case
-            # that left esports unmapped); fall back to the live yes_sub_title. Totals use the
-            # yes_sub_title direction (pick_total_side).
-            yes_from_title = None if is_total else _yes_team_from_title(t["kalshi_title"])
-            name = side_names.get(kid) if is_total else (yes_from_title or side_names.get(kid))
-            if not name or not outs:
+            if not outs:
                 missing += 1
                 continue
-            side = pick_total_side(name, outs) if is_total else pick_side(name, outs)
+            bt = t["bet_type"]
+            if bt in _SPREAD_BET_TYPES:
+                # Spread: verify team+line vs the PM title, map Kalshi YES -> favorite (outcomes[0]).
+                # Fetch-free (uses titles + outcomes already in hand).
+                side = pick_spread_side(t["kalshi_title"], t.get("pm_title"), outs)
+                name, method = t["kalshi_title"], "spread_team_line"
+            elif bt in _TOTAL_BET_TYPES:
+                # Total: direction (over/under) from the live yes_sub_title -> matching PM outcome.
+                name = side_names.get(kid)
+                side = pick_total_side(name, outs) if name else None
+                method = "total_overunder"
+            else:
+                # Moneyline YES side: prefer 'Will X win' parsed from the DB-resident Kalshi title
+                # (fetch-free + names ONLY the YES team, disambiguating the 'A vs B' full-title case
+                # that left esports unmapped); fall back to the live yes_sub_title.
+                yes_from_title = _yes_team_from_title(t["kalshi_title"])
+                name = yes_from_title or side_names.get(kid)
+                side = pick_side(name, outs) if name else None
+                method = "title_win" if yes_from_title else "token_subtitle"
+            if not name:
+                missing += 1
+                continue
             if side is None:
                 ambiguous += 1
                 continue
-            method = ("total_overunder" if is_total
-                      else "title_win" if yes_from_title else "token_subtitle")
             rows.append((kid, pid, side, outs[side], name, method))
         if rows:
             await con.executemany(
