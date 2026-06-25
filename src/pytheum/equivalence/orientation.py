@@ -114,8 +114,12 @@ def pick_total_side(kalshi_side: str, outcomes: list[str]) -> int | None:
 # than/over N") is the FAVORITE covering -> PM outcomes[0]. Oriented by pick_spread_side.
 SPREAD_BET_TYPES = frozenset({"spread"})
 
-_SPREAD_KALSHI = re.compile(r"^(.+?)\s+wins?\s+by\s+(?:over|more\s+than)\s+([0-9]+(?:\.[0-9]+)?)",
-                            re.IGNORECASE)
+# Kalshi spread titles come in two shapes, verified against the export: the DOMINANT
+# '<team> by over N goals?' (no 'wins' — 5.8k+) and '<team> wins by over N …' (1.5k), plus
+# 'more than' for some soccer goal lines. So 'wins' is OPTIONAL — requiring it (the first cut)
+# missed the majority of live spreads and left them all orientation_excluded.
+_SPREAD_KALSHI = re.compile(
+    r"^(.+?)\s+(?:wins?\s+)?by\s+(?:over|more\s+than)\s+([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
 _SPREAD_PM_LINE = re.compile(r"\(\s*[-+]?\s*([0-9]+(?:\.[0-9]+)?)\s*\)")
 
 
