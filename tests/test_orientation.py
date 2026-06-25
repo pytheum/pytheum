@@ -10,6 +10,7 @@ from pytheum.equivalence.orientation import (
     direction,
     orient_pair,
     outcomes_from_payload,
+    pick_spread_side,
     pick_team_side,
     pick_total_side,
     yes_team_from_title,
@@ -61,6 +62,38 @@ def test_orient_pair_total_needs_yes_subtitle() -> None:
     assert orient_pair("total", "NYY vs DET Total Runs?", ["Over", "Under"]) == (None, None)
     assert orient_pair("total", "NYY vs DET Total Runs?", ["Over", "Under"],
                        yes_subtitle="Over 9.5") == (0, "Over")
+
+
+def test_pick_spread_side_maps_yes_to_favorite() -> None:
+    # Real box examples (ali): PM spread outcomes are [favorite, underdog], line in the title.
+    # Kalshi YES ("<team> wins by more than N") = the favorite covering -> outcomes[0].
+    assert pick_spread_side("Republic of Korea wins by more than 2.5 goals?",
+                            "Spread: Korea Republic (-2.5)", ["Korea Republic", "Mexico"]) == 0
+    assert pick_spread_side("Detroit wins by over 1.5 runs?",
+                            "Spread: Detroit Tigers (-1.5)",
+                            ["Detroit Tigers", "New York Yankees"]) == 0
+
+
+def test_pick_spread_side_conservative() -> None:
+    # line mismatch -> unmapped (matcher matched the line; we verify, never assume)
+    assert pick_spread_side("Detroit wins by over 1.5 runs?",
+                            "Spread: Detroit Tigers (-2.5)",
+                            ["Detroit Tigers", "New York Yankees"]) is None
+    # Kalshi YES team matches the UNDERDOG (idx 1), not the favorite -> anomalous -> unmapped
+    assert pick_spread_side("Mexico wins by more than 2.5 goals?",
+                            "Spread: Korea Republic (-2.5)", ["Korea Republic", "Mexico"]) is None
+    # not a spread-cover title -> unmapped
+    assert pick_spread_side("Will France win?", "Spread: France (-1.5)", ["France", "Iraq"]) is None
+    # no line in the PM title -> unmapped
+    assert pick_spread_side("Detroit wins by over 1.5 runs?", "Detroit moneyline",
+                            ["Detroit Tigers", "New York Yankees"]) is None
+
+
+def test_orient_pair_spread_uses_pm_title() -> None:
+    assert orient_pair("spread", "France wins by more than 1.5 goals?", ["France", "Iraq"],
+                       pm_title="Spread: France (-1.5)") == (0, "France")
+    # without the pm_title (no line to verify) -> unmapped
+    assert orient_pair("spread", "France wins by more than 1.5 goals?", ["France", "Iraq"]) == (None, None)
 
 
 def test_orient_pair_conservative_and_scoped() -> None:
