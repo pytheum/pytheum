@@ -1307,6 +1307,30 @@ _SELF_ORIENTED_BET_TYPES = frozenset({"event", "house_party"})
 # AND a manual pull. They score + rank fine once seen; the only gate was scan breadth.
 _DIVERGENCE_SCAN_BREADTH = 500
 
+# False-extreme guard: a leg pinned at a price extreme (>=0.97 or <=0.03) that produces a LARGE
+# net edge is the near-resolved / stale-leg signature — one venue is settled-but-unresolved or
+# mispriced on a thin book (e.g. a Senate pair at PM 1.0 / Kalshi 0.013, 131d out, $457 vol) —
+# NOT a lockable arb. Distinct from a parked wall (frozen order, caught separately). The >15pt
+# suspect guard exempts event/self-oriented pairs, so without this their ranked top is fake extremes.
+_EXTREME_PRICE = 0.97
+_EXTREME_FALSE_EDGE = 0.25
+
+
+def _leg_implied(leg: dict[str, Any]) -> float | None:
+    """A leg's implied YES probability — the stored implied_yes, else the book mid."""
+    p = leg.get("implied_yes")
+    if isinstance(p, (int, float)):
+        return float(p)
+    book = leg.get("book") or {}
+    bid, ask = book.get("bid"), book.get("ask")
+    if isinstance(bid, (int, float)) and isinstance(ask, (int, float)):
+        return (float(bid) + float(ask)) / 2.0
+    return None
+
+
+def _is_price_extreme(p: float | None) -> bool:
+    return p is not None and (p >= _EXTREME_PRICE or p <= 1.0 - _EXTREME_PRICE)
+
 
 async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float = 0.0,
                            limit: int = 10, seed_limit: int = 12,
@@ -1363,6 +1387,7 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
     orientation_excluded = 0
     parked_excluded = 0
     suspect_excluded = 0
+    extreme_excluded = 0
     for p in pairs:
         a, b = p.get("a") or {}, p.get("b") or {}
         # ORIENTATION GATE: game/tennis/esports moneyline pairs map MARKET to
@@ -1396,6 +1421,13 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
         # side issue, so exclude rather than rank phantom money first.
         if p.get("bet_type") not in ("event",) and edge > 0.15:
             suspect_excluded += 1
+            continue
+        # False-extreme guard (all bet types, incl. the event/self-oriented ones the >15pt
+        # guard exempts): a leg pinned near 0/1 with a large edge is near-resolved/stale, not
+        # a lock. Legit divergences sit at moderate, comparable prices on both legs.
+        if edge >= _EXTREME_FALSE_EDGE and (
+                _is_price_extreme(_leg_implied(a)) or _is_price_extreme(_leg_implied(b))):
+            extreme_excluded += 1
             continue
         # Resolution-date integrity: Polymarket's endDate is a known-unreliable
         # placeholder on some markets (verified via gamma: NBA-draft PM legs carry
@@ -1463,6 +1495,7 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
         "orientation_excluded": orientation_excluded,
         "parked_excluded": parked_excluded,
         "suspect_excluded": suspect_excluded,
+        "extreme_excluded": extreme_excluded,
         "ranked_by": "annualized_net_edge (capital-efficiency; falls back to net_edge when horizon unknown)",
         "note": ("Pairs are pre-decided by the cross-venue matcher (gold set) and "
                  "joined to live books server-side; `matched_by` is the per-pair "
