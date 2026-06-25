@@ -29,6 +29,7 @@ from pytheum.api.params import (
 )
 from pytheum.api.ref_utils import normalize_ref
 from pytheum.equivalence.index import is_fungible_method
+from pytheum.equivalence.orientation import orient_pair, outcomes_from_payload
 
 # ---------------------------------------------------------------------------
 # Collection endpoint constants + cache
@@ -290,11 +291,15 @@ async def handle_markets_equivalents(
         pairs = []
 
     legs: dict[str, dict[str, Any]] = {}
+    pm_outcomes: dict[str, list[str] | None] = {}
     if pairs and dao is not None:
         ids = sorted({p["kalshi_market_id"] for p in pairs}
                      | {p["polymarket_market_id"] for p in pairs})
         for r in await dao.fetch_markets_by_ids(ids):
             legs[r["id"]] = _leg(r, include_rules=include_rules)
+            # Keep the PM outcome names aside (not in the leg response — kept small) for
+            # orient-at-serve below.
+            pm_outcomes[r["id"]] = outcomes_from_payload(r.get("payload"))
         # Staleness inline so a parked-wall leg never reads as a live edge.
         await attach_quote_staleness(list(legs.values()), dao=dao)
 
@@ -329,14 +334,25 @@ async def handle_markets_equivalents(
         if status == "live" and not (_has_two_sided_book(a) and _has_two_sided_book(b)):
             dropped_one_sided += 1
             continue
+        # Orient-at-serve: if the matcher/side-map didn't already set poly_side, derive it
+        # inline from the Kalshi title ('Will X win' → YES team) + the PM outcomes, for the
+        # team/total bet types. This orients the perishable daily front (which resolves before
+        # a pre-computed pair_side_map run can catch it) without a stored table — fresh every
+        # request. Conservative (orient_pair returns None on any ambiguity), and ADDITIVE: it
+        # only fills a null poly_side, never overrides an existing one, so it can't invert.
+        poly_side = p.get("poly_side")
+        poly_outcome = p.get("poly_outcome")
+        if poly_side is None:
+            poly_side, poly_outcome = orient_pair(
+                p.get("bet_type"), a.get("question"), pm_outcomes.get(p["polymarket_market_id"]))
         out.append({
             "method": p.get("method"),
             "confidence": p.get("confidence"),
             "bet_type": p.get("bet_type"),
-            # Which poly outcome index the Kalshi YES side maps to (side-mapper);
-            # null = unmapped, the scanner won't edge-score the pair.
-            "poly_side": p.get("poly_side"),
-            "poly_outcome": p.get("poly_outcome"),
+            # Which poly outcome index the Kalshi YES side maps to (matcher side-map OR
+            # orient-at-serve); null = couldn't orient unambiguously → scanner won't edge-score.
+            "poly_side": poly_side,
+            "poly_outcome": poly_outcome,
             "a": a,
             "b": b,
         })
