@@ -18,6 +18,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import datetime as _dt
+import gzip
 import json
 from datetime import datetime
 from typing import Any
@@ -29,6 +31,33 @@ from scripts.load_market_equivalence import _db_url
 
 _GAMMA = "https://gamma-api.polymarket.com/markets/"
 _CONCURRENCY = 4
+
+
+def _effective_date(game_date: str | None, resolution_date: str | None) -> str | None:
+    """The pair's true liveness date — game_date is authoritative for sports (Kalshi's
+    close lags the event); fall back to resolution_date for events. Mirrors sync_paired_kalshi."""
+    return game_date or resolution_date
+
+
+def _live_pm_refs(export_path: str, min_date: str) -> set[str]:
+    """pm_refs from the export whose pair's effective date is on/after min_date.
+
+    Scopes the PM backfill to the genuinely-live front (~recent gamma) instead of fetching
+    ~100k historical legs — the same live-only scope the Kalshi backfill uses."""
+    live: set[str] = set()
+    with gzip.open(export_path, "rt", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            ref = r.get("pm_ref")
+            if not ref:
+                continue
+            eff = (_effective_date(r.get("game_date"), r.get("resolution_date")) or "")[:10]
+            if eff and eff >= min_date:
+                live.add(ref)
+    return live
 
 _MISSING_QUERY = """
 SELECT DISTINCT e.polymarket_market_id
@@ -105,15 +134,32 @@ def _num(v: Any) -> float | None:
         return None
 
 
-async def run(*, limit: int | None, refresh: bool) -> None:
+async def run(*, limit: int | None, refresh: bool, from_export: str | None,
+              min_resolution_date: str | None, write: bool) -> None:
     con = await asyncpg.connect(_db_url(), statement_cache_size=0)
     try:
         await con.execute("SET statement_timeout = 0")
         q = _REFRESH_QUERY if refresh else _MISSING_QUERY
-        if limit:
-            q += f" LIMIT {int(limit)}"
         ids = [r["polymarket_market_id"] for r in await con.fetch(q)]
-        print(f"{'refreshing' if refresh else 'filling'} {len(ids)} poly rows from Gamma")
+
+        # Live-only scope (fill path): keep only legs whose pair is live per the export.
+        scope = "ALL (incl. historical/closed)"
+        if from_export and min_resolution_date and not refresh:
+            live = _live_pm_refs(from_export, min_resolution_date)
+            before = len(ids)
+            ids = [i for i in ids if i in live]
+            scope = (f"live-only (effective date [game_date else resolution_date] >= "
+                     f"{min_resolution_date}): {len(ids)} of {before} missing-PM legs are live")
+        if limit:
+            ids = ids[:int(limit)]
+
+        print(f"{'refreshing' if refresh else 'filling'} {len(ids)} poly rows from Gamma  | scope: {scope}")
+        for sample in ids[:5]:
+            print(f"  would-fill: {sample}")
+        if not write:
+            print(f"\nDRY-RUN: would fetch + upsert up to {len(ids)} Polymarket legs from Gamma "
+                  f"(concurrent). Re-run with --write to apply.")
+            return
 
         sem = asyncio.Semaphore(_CONCURRENCY)
         rows: list[tuple] = []
@@ -154,12 +200,27 @@ async def run(*, limit: int | None, refresh: bool) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--refresh", action="store_true",
                     help="re-pull quotes for previously supplemental rows")
+    ap.add_argument("--from-export",
+                    help="equivalence-export.jsonl.gz — used to scope --live-only to live pairs.")
+    ap.add_argument("--today", default=_dt.date.today().isoformat(),
+                    help="Reference date for --live-only.")
+    ap.add_argument("--live-only", action="store_true",
+                    help="Only fill PM legs whose pair is live (effective date >= --today). "
+                         "Requires --from-export. Avoids fetching ~100k historical legs.")
+    ap.add_argument("--min-resolution-date", default=None,
+                    help="Only fill legs whose pair's effective date is on/after this YYYY-MM-DD.")
+    ap.add_argument("--write", action="store_true",
+                    help="Actually fetch+upsert. Omitted = DRY-RUN (scoped count + sample only).")
     args = ap.parse_args()
-    asyncio.run(run(limit=args.limit, refresh=args.refresh))
+    min_date = args.min_resolution_date or (args.today if args.live_only else None)
+    if args.live_only and not args.from_export:
+        ap.error("--live-only requires --from-export (liveness comes from the export rows)")
+    asyncio.run(run(limit=args.limit, refresh=args.refresh, from_export=args.from_export,
+                    min_resolution_date=min_date, write=args.write))
 
 
 def _main_guard() -> None:  # pragma: no cover
