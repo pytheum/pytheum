@@ -72,6 +72,13 @@ def test_pick_spread_side_maps_yes_to_favorite() -> None:
     assert pick_spread_side("Detroit wins by over 1.5 runs?",
                             "Spread: Detroit Tigers (-1.5)",
                             ["Detroit Tigers", "New York Yankees"]) == 0
+    # the DOMINANT live shape: '<team> by over N …' with NO 'wins' (the regression that left
+    # live WC spreads orientation_excluded — must orient too).
+    assert pick_spread_side("Argentina by over 2.5 goals?",
+                            "Spread: Argentina (-2.5)", ["Argentina", "Brazil"]) == 0
+    assert pick_spread_side("Los Angeles D by over 1.5 runs?",
+                            "Spread: Los Angeles Dodgers (-1.5)",
+                            ["Los Angeles Dodgers", "San Diego Padres"]) == 0  # truncated-team prefix
 
 
 def test_pick_spread_side_conservative() -> None:
