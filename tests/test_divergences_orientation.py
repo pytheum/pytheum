@@ -73,3 +73,31 @@ async def test_scans_full_candidate_window_not_just_soonest(monkeypatch) -> None
     assert seen["limit"] == tools._DIVERGENCE_SCAN_BREADTH   # full window, not soonest-150
     assert seen["limit"] >= 500
     assert len(out.get("divergences", [])) == 1             # the self-oriented arb surfaces
+
+
+async def test_self_oriented_pass_fetches_subset_and_merges_far_arb(monkeypatch) -> None:
+    """The far self-oriented arbs (elections/House) sit past the candidate cap, so the main
+    soonest pass never sees them. find_divergences must fire a SECOND fetch scoped to the
+    self-oriented bet types and merge it — that's what surfaces the 4% NHL-draft-class arb."""
+    calls: list = []
+    far_arb = {
+        "bet_type": "event", "poly_side": None, "method": "x", "confidence": 1.0,
+        "a": {"id": "kalshi:KXNHLDRAFTPICK", "venue": "kalshi",
+              "question": "Will GM be the 1st overall pick?", "days_to_resolution": 30,
+              "book": {"bid": 0.98, "ask": 0.99}},
+        "b": {"id": "polymarket:1343556", "venue": "polymarket",
+              "question": "Will GM be the 1st overall pick?", "days_to_resolution": 30,
+              "book": {"bid": 0.93, "ask": 0.95}},
+    }
+
+    async def _fake_get(path, params, base_url):  # noqa: ANN001
+        calls.append(params.get("bet_type"))
+        # main pass (no bet_type) = empty perishable front; self-oriented pass returns the arb.
+        return {"pairs": [far_arb]} if params.get("bet_type") else {"pairs": []}
+
+    monkeypatch.setattr(tools, "_get", _fake_get)
+    out = await find_divergences(min_net_edge=-1.0, limit=10, include_rules=False)
+    # a second fetch fired, scoped to the self-oriented bet types
+    assert any(c and "event" in c and "house_party" in c for c in calls), calls
+    # and the far self-oriented arb surfaced (merged in from that pass)
+    assert len(out.get("divergences", [])) == 1, out
