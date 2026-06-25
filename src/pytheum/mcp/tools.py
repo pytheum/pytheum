@@ -1220,19 +1220,17 @@ def _lock_days(a: Any, b: Any) -> float | None:
 
 
 def _annualized_edge(net_edge: Any, days: Any) -> float | None:
-    """Annualize a locked net edge over its capital-lockup horizon so an agent
-    ranks by capital efficiency, not raw gap (trader ask #4: a 2.26% lock over
-    887d should sort BELOW a 1% lock resolving next week). Naive compounding:
-    (1+edge)^(365/days) - 1. None when edge/days missing or non-positive days."""
+    """Annualize a locked net edge over its capital-lockup horizon so an agent ranks by capital
+    efficiency, not raw gap (trader ask #4: a 2.26% lock over 887d sorts BELOW a 1% lock resolving
+    next week). SIMPLE annualization: net_edge * 365/days. A one-time cross-venue lock can't be
+    re-compounded into itself, so the simple rate is the honest number — the old compounding
+    ((1+edge)^(365/days)-1) made a 0.19 edge over 5d read as the 1000.0 clamp (a misleading
+    "1000x"); simple gives 13.87 (1387% APY). Preserves the short-lock-ranks-higher order. The
+    0.5-day floor + 1000 cap are defensive backstops for sub-day locks. None when missing /
+    non-positive days."""
     if not isinstance(net_edge, (int, float)) or not isinstance(days, (int, float)) or days <= 0:
         return None
-    try:
-        # Cap at 1000 (100,000% APY): sub-day locks compound to absurdity
-        # (a 0.46 edge over 0.92d annualizes to 1e65) and would dominate any
-        # sort — beyond the cap the number carries no information anyway.
-        return min(round((1 + net_edge) ** (365.0 / max(days, 0.5)) - 1, 4), 1000.0)
-    except (OverflowError, ValueError):
-        return None
+    return min(round(net_edge * (365.0 / max(days, 0.5)), 4), 1000.0)
 
 
 def _orient_poly_leg(leg: dict[str, Any], side: Any) -> dict[str, Any]:

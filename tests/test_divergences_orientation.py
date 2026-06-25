@@ -103,6 +103,17 @@ async def test_self_oriented_pass_fetches_subset_and_merges_far_arb(monkeypatch)
     assert len(out.get("divergences", [])) == 1, out
 
 
+def test_annualized_edge_simple_not_compounded_clamp() -> None:
+    """Simple annualization (edge * 365/days), not compounding — a one-time lock can't be
+    re-compounded into itself. ali's 0.19-over-5d arb read as the 1000.0 clamp under compounding;
+    simple gives the honest 13.87. Short locks still rank above long ones (capital efficiency)."""
+    assert tools._annualized_edge(0.19, 5) == 13.87          # was clamped to 1000.0
+    assert tools._annualized_edge(0.19, 5) < 1000.0          # no misleading "1000x"
+    # capital efficiency order preserved: a near-term small lock beats a far-term bigger one.
+    assert tools._annualized_edge(0.01, 7) > tools._annualized_edge(0.0226, 887)
+    assert tools._annualized_edge(0.1, 0) is None            # non-positive days -> None
+
+
 def _single_pair(monkeypatch, pair):
     async def _g(path, params, base_url):  # noqa: ANN001
         # main pass returns the pair; self-oriented pass empty (avoid double-count)
