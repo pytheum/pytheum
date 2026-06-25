@@ -139,6 +139,7 @@ def _has_two_sided_book(leg: dict[str, Any]) -> bool:
 def _index_rows_to_pairs(
     rows: list[dict[str, Any]], *, limit: int, fungible_only: bool = False,
     scan_budget: int = _SCAN_BUDGET_ROWS, skip_row_stale: bool = True,
+    bet_types: frozenset[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Translate EquivalenceIndex export rows to the DB pair format used by
     the collection handler.  poly_side / poly_outcome are null because the
@@ -156,8 +157,14 @@ def _index_rows_to_pairs(
     """
     pairs: list[dict[str, Any]] = []
     for examined, row in enumerate(rows):
-        if examined >= scan_budget:
+        # scan_budget bounds the soonest-front scan. When filtering to specific bet_types
+        # (the self-oriented set for the divergence scanner), scan the FULL corpus instead —
+        # those pairs (elections/House) resolve far out, so they sit PAST the soonest front;
+        # the bet_type test below keeps the full pass cheap.
+        if bet_types is None and examined >= scan_budget:
             break
+        if bet_types is not None and row.get("bet_type") not in bet_types:
+            continue
         if fungible_only and not is_fungible_method(row.get("method")):
             continue
         k_ref = row.get("kalshi_ref")
@@ -255,7 +262,14 @@ async def handle_markets_equivalents(
             "error": "invalid status; must be one of: "
                      + ", ".join(_VALID_STATUSES)
         }
-    cache_key = f"{limit}:{fungible_only}:{include_rules}:{status}"
+    # Optional bet_type filter (comma-separated). Lets a caller (e.g. the divergence scanner)
+    # fetch ONLY a bet-type subset — the self-oriented event/house_party pairs resolve far out,
+    # so a normal soonest-first page never reaches them; this scans the full corpus for the
+    # subset so they surface. None = no filter (all bet types).
+    _bt_raw = (query.get("bet_type") or "").strip()
+    bet_types = frozenset(b.strip() for b in _bt_raw.split(",") if b.strip()) or None
+    cache_key = (f"{limit}:{fungible_only}:{include_rules}:{status}:"
+                 f"{','.join(sorted(bet_types)) if bet_types else ''}")
     if not force_refresh:
         hit = _cache.get(cache_key)
         if hit is not None:
@@ -284,7 +298,7 @@ async def handle_markets_equivalents(
     if equivalence is not None:
         pairs = _index_rows_to_pairs(equivalence._rows, limit=candidate_cap,
                                      fungible_only=fungible_only,
-                                     skip_row_stale=skip_row_stale)
+                                     skip_row_stale=skip_row_stale, bet_types=bet_types)
     elif dao is not None:
         pairs = await dao.fetch_equivalence_pairs(limit=candidate_cap)
     else:
