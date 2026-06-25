@@ -147,18 +147,20 @@ def _pm_spread_line(pm_title: str | None) -> float | None:
 
 
 def pick_spread_side(kalshi_title: str | None, pm_title: str | None,
-                     outcomes: list[str]) -> int | None:
+                     outcomes: list[str], *, line: float | int | None = None) -> int | None:
     """Orient a spread: the Kalshi YES team (covering its line) maps to the PM FAVORITE outcome.
     PM spread outcomes are [favorite, underdog], so the favorite (Kalshi YES) is index 0 — but we
-    VERIFY rather than assume: the line (from the PM title, not outcomes) must equal the Kalshi
-    line, AND the Kalshi YES team must UNIQUELY token-match outcomes[0]. If it instead matches the
-    underdog (idx 1) or is ambiguous, the pair is anomalous -> None (a wrong spread inverts the
-    edge). Conservative throughout."""
+    VERIFY rather than assume: the line must agree, AND the Kalshi YES team must UNIQUELY token-
+    match outcomes[0]. If it matches the underdog (idx 1) or is ambiguous, the pair is anomalous ->
+    None (a wrong spread inverts the edge). The line source is the matcher's matched ``line`` when
+    given (the export field — reliable), else parsed from the PM title. Conservative throughout."""
     yes_team, k_line = _parse_kalshi_spread(kalshi_title)
-    if not yes_team or k_line is None or not outcomes:
+    if not yes_team or not outcomes:
         return None
-    p_line = _pm_spread_line(pm_title)
-    if p_line is None or abs(k_line - p_line) > 1e-6:  # line must agree (matcher matched it; verify)
+    eff_line = abs(line) if isinstance(line, (int, float)) else _pm_spread_line(pm_title)
+    if eff_line is None:
+        return None
+    if k_line is not None and abs(k_line - eff_line) > 1e-6:  # title line must agree with the match
         return None
     # Kalshi YES = the favorite covering -> must be PM outcomes[0]. pick_team_side enforces a
     # unique match, so side==0 confirms YES-team==favorite (not the underdog, not ambiguous).
@@ -172,11 +174,12 @@ def orient_pair(
     *,
     yes_subtitle: str | None = None,
     pm_title: str | None = None,
+    line: float | int | None = None,
 ) -> tuple[int | None, str | None]:
     """(poly_side_index, poly_outcome) for a pair, or (None, None) if it can't be oriented
     unambiguously. team-WIN uses the title's YES team (fallback: yes_subtitle); totals use the
-    yes_subtitle direction (the title has no direction); spreads verify team+line vs the PM title
-    and map to the favorite (outcomes[0]). Conservative throughout."""
+    yes_subtitle direction (the title has no direction); spreads verify team + line (the matched
+    ``line``, else parsed from the PM title) and map to the favorite (outcomes[0]). Conservative."""
     if not pm_outcomes:
         return None, None
     if bet_type in TOTAL_BET_TYPES:
@@ -185,7 +188,7 @@ def orient_pair(
         yes_name = yes_team_from_title(kalshi_title) or (yes_subtitle or "")
         side = pick_team_side(yes_name, pm_outcomes) if yes_name else None
     elif bet_type in SPREAD_BET_TYPES:
-        side = pick_spread_side(kalshi_title, pm_title, pm_outcomes)
+        side = pick_spread_side(kalshi_title, pm_title, pm_outcomes, line=line)
     else:
         return None, None
     if side is None or not (0 <= side < len(pm_outcomes)):
