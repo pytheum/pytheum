@@ -1300,6 +1300,13 @@ def _trunc_rules(text: str | None) -> str | None:
 # (it dropped 83/84 house_party pairs as "unmapped orientation").
 _SELF_ORIENTED_BET_TYPES = frozenset({"event", "house_party"})
 
+# find_divergences scans the FULL live candidate window the equivalents endpoint will return
+# (= markets_equivalents._MAX_CANDIDATES), not just the soonest 150. Self-oriented binary arbs
+# (event/house_party) resolve later than the daily-sport front, so they sit PAST the soonest-150
+# and were never scanned — a live 4% KXNHLDRAFTPICK arb sat at ~150-200, invisible to the scanner
+# AND a manual pull. They score + rank fine once seen; the only gate was scan breadth.
+_DIVERGENCE_SCAN_BREADTH = 500
+
 
 async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float = 0.0,
                            limit: int = 10, seed_limit: int = 12,
@@ -1326,7 +1333,7 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
         return {"error": "invalid_limit", "limit": limit,
                 "hint": "limit must be an integer >= 1 (it's the max pairs to return). "
                         "limit=0 would yield an empty list that looks like 'no divergences found'."}
-    _eq_params: dict[str, Any] = {"limit": 150}
+    _eq_params: dict[str, Any] = {"limit": _DIVERGENCE_SCAN_BREADTH}
     if include_rules:
         _eq_params["include_rules"] = "true"
     if fungible_only:

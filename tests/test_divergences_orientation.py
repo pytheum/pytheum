@@ -50,3 +50,26 @@ async def test_house_party_pair_not_orientation_excluded(monkeypatch) -> None:
     assert out.get("orientation_excluded", 0) == 0, out
     assert out.get("pairs_scanned") == 1, out
     assert len(out.get("divergences", [])) == 1, out
+
+
+async def test_scans_full_candidate_window_not_just_soonest(monkeypatch) -> None:
+    """Self-oriented binary arbs resolve later than the daily-sport front, so they sit past the
+    soonest-150 and were never scanned (the live 4% NHL-draft arb). The scanner must request the
+    full candidate window (_DIVERGENCE_SCAN_BREADTH = the endpoint's _MAX_CANDIDATES)."""
+    seen: dict = {}
+
+    async def _fake_get(path, params, base_url):  # noqa: ANN001
+        seen["limit"] = params.get("limit")
+        return {"pairs": [{
+            "bet_type": "event", "poly_side": None, "method": "x", "confidence": 1.0,
+            "a": {"venue": "kalshi", "question": "Will GM be the 1st overall pick?",
+                  "days_to_resolution": 30, "book": {"bid": 0.98, "ask": 0.99}},
+            "b": {"venue": "polymarket", "question": "Will GM be the 1st overall pick?",
+                  "days_to_resolution": 30, "book": {"bid": 0.93, "ask": 0.95}},
+        }]}
+
+    monkeypatch.setattr(tools, "_get", _fake_get)
+    out = await find_divergences(min_net_edge=-1.0, limit=10, include_rules=False)
+    assert seen["limit"] == tools._DIVERGENCE_SCAN_BREADTH   # full window, not soonest-150
+    assert seen["limit"] >= 500
+    assert len(out.get("divergences", [])) == 1             # the self-oriented arb surfaces
