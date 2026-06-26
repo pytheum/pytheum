@@ -1,0 +1,65 @@
+name: Release
+
+# Publishes the `pytheum` package to PyPI via OIDC Trusted Publishing on a
+# GitHub Release. No tokens stored anywhere — PyPI verifies this workflow's
+# OIDC identity against the trusted-publisher config (one-time setup) at
+# https://pypi.org/manage/project/pytheum/settings/publishing/
+#
+# Release flow:
+#   1. Bump `version` in pyproject.toml
+#   2. git commit + tag vX.Y.Z + push --tags
+#   3. gh release create vX.Y.Z --generate-notes
+#   4. This workflow fires on `release: published` and publishes automatically.
+# The build job version-guards against the tag so a stale version can't ship.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      # The package version must match the release tag (strip leading 'v').
+      - name: Verify version matches release tag
+        run: |
+          PKG_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::pyproject version ($PKG_VERSION) != release tag ($TAG_VERSION)"
+            exit 1
+          fi
+          echo "Version OK: $PKG_VERSION"
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-pypi:
+    name: Publish to PyPI (OIDC Trusted Publishing)
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # required for OIDC — no API token needed
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
