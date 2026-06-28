@@ -11,7 +11,7 @@ Each entry in the `artifacts` array describes one released file:
   "name": "equivalence-export",        // logical dataset name
   "filename": "equivalence-export.jsonl.gz",
   "sha256": "<hex digest>",            // SHA-256 of the compressed file
-  "records": 136877,                   // row count after decompression
+  "records": 141844,                   // row count after decompression
   "description": "...",
   "license": "CC-BY-4.0",
   "version": "2026-06-13"

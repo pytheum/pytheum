@@ -54,7 +54,7 @@ dataset_version), `related` (pairs_loaded), `service` (version + now).
 ```jsonc
 // t_status()
 {
-  "equivalence": { "pairs_loaded": 136877, "dataset_version": "2026-06-12T21:40:00Z" },
+  "equivalence": { "pairs_loaded": 141844, "dataset_version": "2026-06-28T21:40:00Z" },
   "related":     { "pairs_loaded": 1097 },
   "platforms": {
     "kalshi":     { "count": 45000, "last_updated": "2026-06-14T08:10:00Z", "freshness": "ok" },
@@ -95,7 +95,7 @@ venue (not a fuzzy title match).
       "confidence": 1.0, "implied_yes": 0.61, "book": { "bid": 0.60, "ask": 0.62 } }
   ],
   "cross_venue": { "kalshi_implied": 0.65, "pm_implied": 0.61, "spread": 0.04 },
-  "meta": { "pairs_loaded": 136877, "dataset_version": "2026-06-12T21:40:00Z", "matched_via": "kalshi_ticker" }
+  "meta": { "pairs_loaded": 141844, "dataset_version": "2026-06-28T21:40:00Z", "matched_via": "kalshi_ticker" }
 }
 ```
 
@@ -179,7 +179,7 @@ deadline gaps) make seemingly identical markets resolve differently.
     "deadlines": { "kalshi": "2026-12-31T00:00:00+00:00", "polymarket": "2026-12-31T12:00:00+00:00" },
     "same_deadline_day": true, "confidence": 1.0, "method": "blocked_deterministic"
   },
-  "meta": { "pairs_loaded": 136877, "dataset_version": "2026-06-12T21:40:00Z", "matched_via": "kalshi_ticker" }
+  "meta": { "pairs_loaded": 141844, "dataset_version": "2026-06-28T21:40:00Z", "matched_via": "kalshi_ticker" }
 }
 ```
 
@@ -567,7 +567,7 @@ trade-count data. Invalid interval/range → `{error, hint}`.
   "market": { "id": "kalshi:KXFED-25-JUL", "question": "…", "venue": "kalshi" },
   "interval": "1d",
   "candles": [
-    { "t": "2026-06-12T00:00:00Z", "o": 0.62, "h": 0.67, "l": 0.61, "c": 0.66, "v": 18400 },
+    { "t": "2026-06-28T00:00:00Z", "o": 0.62, "h": 0.67, "l": 0.61, "c": 0.66, "v": 18400 },
     { "t": "2026-06-13T00:00:00Z", "o": 0.66, "h": 0.68, "l": 0.64, "c": 0.65, "v": null }
   ],
   "meta": { "source": "pit_archive", "count": 2, "partial_last_bucket": true }
