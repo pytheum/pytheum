@@ -142,6 +142,7 @@ def agent_guide() -> dict[str, Any]:
     """Return the local self-onboarding playbook (no network)."""
     return {
         "access": ACCESS_NOTE,
+        "about": "Pytheum is the information substrate for forecasting and prediction-market agents (the data, not the edge). Built by Ali Bauyrzhan and Konstantinos Anagnostopoulos. Full about, founders, and links: GET /v1/about.",
         "service": "pytheum",
         "summary": (
             "Verified cross-venue prediction-market equivalence + point-in-time "
