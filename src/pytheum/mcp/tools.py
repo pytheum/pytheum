@@ -13,6 +13,32 @@ import httpx
 
 DEFAULT_BASE = os.environ.get("PYTHEUM_API_BASE", "https://api.pytheum.com")
 
+# Shared, lazily-created httpx client. A fresh AsyncClient per call forced a new
+# TCP+TLS handshake on every one of the ~25 tools; under context_batch's fan-out
+# that caused handshake storms / RemoteProtocolError (#244). One pooled client,
+# created inside the running loop on first use, reuses keep-alive connections.
+_CLIENT: httpx.AsyncClient | None = None
+_CLIENT_LOCK: asyncio.Lock | None = None
+# Keep the prior 30s total budget but pin connect/read so a stalled hop can't
+# hang a tool indefinitely.
+_TIMEOUT = httpx.Timeout(30.0, connect=10.0, read=30.0)
+_LIMITS = httpx.Limits(max_connections=100, max_keepalive_connections=20)
+
+
+async def _client() -> httpx.AsyncClient:
+    """Return the process-wide shared AsyncClient, creating it lazily inside the
+    running event loop (never at import time). Memoized; double-checked under an
+    asyncio.Lock so a concurrent fan-out's first calls don't each build one."""
+    global _CLIENT, _CLIENT_LOCK
+    if _CLIENT is not None:
+        return _CLIENT
+    if _CLIENT_LOCK is None:
+        _CLIENT_LOCK = asyncio.Lock()
+    async with _CLIENT_LOCK:
+        if _CLIENT is None:
+            _CLIENT = httpx.AsyncClient(timeout=_TIMEOUT, limits=_LIMITS)
+    return _CLIENT
+
 
 class _ApiError(Exception):
     """An HTTP error from the REST layer, carrying status + a clean detail string.
@@ -30,14 +56,14 @@ class _ApiError(Exception):
 async def _get(path: str, params: dict[str, Any], base_url: str) -> dict[str, Any]:
     qs = urlencode({k: v for k, v in params.items() if v is not None})
     url = f"{base_url}{path}" + (f"?{qs}" if qs else "")
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(url)
-        if resp.is_error:
-            detail = ""
-            with contextlib.suppress(Exception):  # body may be non-JSON
-                detail = (resp.json() or {}).get("detail") or ""
-            raise _ApiError(resp.status_code, str(detail))
-        return resp.json()
+    client = await _client()
+    resp = await client.get(url)
+    if resp.is_error:
+        detail = ""
+        with contextlib.suppress(Exception):  # body may be non-JSON
+            detail = (resp.json() or {}).get("detail") or ""
+        raise _ApiError(resp.status_code, str(detail))
+    return resp.json()
 
 
 # --- agent-robustness helpers (informative failures, no internal-URL leak) ----
@@ -384,9 +410,12 @@ def _underlying_coin(question: Any) -> str | None:
 
 
 async def _fetch_spot(sym: str, client: httpx.AsyncClient) -> float | None:
-    """Current USD spot from Coinbase's keyless public endpoint. None on any error."""
+    """Current USD spot from Coinbase's keyless public endpoint. None on any error.
+    Keeps the 2.5s fast-fail (per-request override on the shared client) so a slow
+    external hop never stalls enrichment."""
     try:
-        resp = await client.get(f"https://api.coinbase.com/v2/prices/{sym}-USD/spot")
+        resp = await client.get(f"https://api.coinbase.com/v2/prices/{sym}-USD/spot",
+                                timeout=2.5)
         resp.raise_for_status()
         return float(resp.json()["data"]["amount"])
     except Exception:
@@ -415,8 +444,8 @@ async def _enrich_crypto_spot(rows: Any) -> None:
              if s not in _SPOT_CACHE or now - _SPOT_CACHE[s][1] > _SPOT_TTL_S]
     if stale:
         try:
-            async with httpx.AsyncClient(timeout=2.5) as client:
-                prices = await asyncio.gather(*[_fetch_spot(s, client) for s in stale])
+            client = await _client()
+            prices = await asyncio.gather(*[_fetch_spot(s, client) for s in stale])
             for s, p in zip(stale, prices, strict=False):
                 _SPOT_CACHE[s] = (p, now)
         except Exception:

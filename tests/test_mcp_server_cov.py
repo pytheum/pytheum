@@ -374,3 +374,61 @@ async def test_build_http_app_lifespan_passes_through(
     # Starlette/MCP lifespan handler completes; we only assert it didn't 429.
     await app({"type": "lifespan"}, _receive, _send)
     assert all(m.get("status") != 429 for m in sent)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-tool usage emitter — _emit_usage / _ip_hash
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_emit_usage_writes_parseable_jsonl(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One call writes one JSONL line with ts/tool/ip_hash; the IP is hashed
+    (not plaintext) and the salt feeds the digest."""
+    import json
+
+    log = tmp_path / "usage.jsonl"
+    monkeypatch.setattr(server, "_USAGE_LOG", str(log))
+    monkeypatch.setattr(server, "_USAGE_SALT", "test-salt")
+    token = server._current_ip.set("203.0.113.9")
+    try:
+        server._emit_usage("t_status")
+        server._emit_usage("t_screen")
+    finally:
+        server._current_ip.reset(token)
+
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    rec = json.loads(lines[0])
+    assert set(rec) == {"ts", "tool", "ip_hash"}
+    assert rec["tool"] == "t_status"
+    assert isinstance(rec["ts"], float)
+    # IP is hashed, never stored plaintext, and matches the salted digest.
+    assert "203.0.113.9" not in lines[0]
+    assert rec["ip_hash"] == server._ip_hash("203.0.113.9")
+    assert len(rec["ip_hash"]) == 16
+
+
+def test_emit_usage_never_raises_on_unwritable_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unwritable log path is silently a no-op — logging must never raise into
+    the tool call."""
+    monkeypatch.setattr(
+        server, "_USAGE_LOG", "/this/path/does/not/exist/usage.jsonl")
+    server._emit_usage("t_status")  # must not raise
+
+
+def test_emit_usage_defaults_ip_to_unknown_when_no_scope(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no request scope in flight the ip_hash is the hash of 'unknown'."""
+    import json
+
+    log = tmp_path / "usage.jsonl"
+    monkeypatch.setattr(server, "_USAGE_LOG", str(log))
+    # Fresh contextvar default is "unknown".
+    server._emit_usage("t_guide")
+    rec = json.loads(log.read_text(encoding="utf-8").splitlines()[-1])
+    assert rec["ip_hash"] == server._ip_hash("unknown")
