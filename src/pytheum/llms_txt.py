@@ -29,6 +29,12 @@ _PROVENANCE = (
 _ENDPOINT_ROWS: tuple[tuple[str, str], ...] = (
     ("GET /v1/status",
      "Service health check and dataset summary — keyless, no auth required."),
+    ("GET /v1/about",
+     "Who Pytheum is: mission, vision, and the founders. Same payload as the"
+     " t_about MCP tool, callable over plain HTTP with no install."),
+    ("GET /v1/guide",
+     "Self-onboarding playbook: principles, conventions, tool inventory, and"
+     " workflow recipes. Same payload as the t_guide MCP tool, no install."),
     ("GET /v1/markets/screen",
      "Structured market screen: filter by venue, status, volume, liquidity, resolution window."),
     ("GET /v1/markets/equivalents",

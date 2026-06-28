@@ -15,6 +15,16 @@ from typing import Any
 
 GUIDE_VERSION = 1
 
+# No-install framing, surfaced verbatim by BOTH the MCP tools (t_about/t_guide)
+# and the plain-HTTP /v1/about + /v1/guide endpoints so an agent always knows it
+# can drive the whole API over HTTPS without installing or connecting anything.
+ACCESS_NOTE = (
+    "Callable right now over plain HTTPS at https://mcp.pytheum.com/v1/* with no "
+    "install. For example GET https://mcp.pytheum.com/v1/guide or "
+    "https://mcp.pytheum.com/v1/status. Or connect https://mcp.pytheum.com as an "
+    "MCP connector for the same tools."
+)
+
 # Tool inventory grouped by the job an agent is trying to do. Every name here is
 # cross-checked against the registered MCP tools in tests (no drift).
 _TOOL_GROUPS: list[dict[str, Any]] = [
@@ -131,6 +141,7 @@ _WORKFLOWS = [
 def agent_guide() -> dict[str, Any]:
     """Return the local self-onboarding playbook (no network)."""
     return {
+        "access": ACCESS_NOTE,
         "service": "pytheum",
         "summary": (
             "Verified cross-venue prediction-market equivalence + point-in-time "
@@ -169,6 +180,7 @@ def agent_about() -> dict[str, Any]:
         "data": "Live coverage and freshness via t_status. Graph integrity via t_quality.",
         "tools": "About 25 t_* tools for discovery, real-time context, cross-venue divergences net of fees, prices and history. Call t_guide to start.",
         "pricing": "Free to use.",
+        "access": ACCESS_NOTE,
         "founders": [
             {"name": "Ali Bauyrzhan", "role": "Founder", "bio": "Summer SDE Intern at Amazon Ads, previously research at Columbia Business School.", "linkedin": "https://www.linkedin.com/in/alibaur/", "contact": "ab5867@columbia.edu"},
             {"name": "Konstantinos Anagnostopoulos", "role": "Cofounder", "bio": "SDE at Nebius, previously TA'd a graduate-level databases course as an undergraduate.", "linkedin": "https://www.linkedin.com/in/kon-anagn/", "contact": "ka3037@columbia.edu"},

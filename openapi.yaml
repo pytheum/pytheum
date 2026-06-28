@@ -31,6 +31,26 @@ paths:
         hits, coalesced joins, real upstream calls, errors — keyless.'
       tags:
       - meta
+  /v1/about:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: 'Who Pytheum is: mission, vision, what we do and do not do, and the
+        founders. Same payload as the t_about MCP tool, callable over plain HTTP with
+        no install.'
+      tags:
+      - meta
+  /v1/guide:
+    get:
+      responses:
+        '200':
+          description: OK
+      summary: 'Self-onboarding playbook: principles, conventions, the tool inventory
+        grouped by job, and workflow recipes. Same payload as the t_guide MCP tool,
+        callable over plain HTTP with no install.'
+      tags:
+      - meta
   /v1/markets/screen:
     get:
       responses:
