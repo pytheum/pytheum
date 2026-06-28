@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pytheum"
-version = "0.0.1"
+version = "0.1.0"
 description = "The verified prediction-market graph — routing, registry, config, and dataset tooling"
 readme = "README.md"
 license = { text = "MIT" }

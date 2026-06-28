@@ -227,7 +227,7 @@ async def test_serve_wires_router_and_stops_on_signal(
     assert created == {"host": "127.0.0.1", "port": 8080}
     assert fake_server.should_exit is True
     out = capsys.readouterr().out
-    assert "offline serve" in out
+    assert "pytheum" in out and "serve" in out
 
 
 @pytest.mark.asyncio

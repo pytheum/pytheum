@@ -6,12 +6,12 @@
     "url": "https://github.com/pytheum/pytheum",
     "source": "github"
   },
-  "version": "0.5.0",
+  "version": "0.1.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@pytheum/mcp",
-      "version": "0.5.0",
+      "version": "0.1.0",
       "transport": {
         "type": "stdio"
       }
@@ -19,7 +19,7 @@
     {
       "registryType": "pypi",
       "identifier": "pytheum",
-      "version": "0.5.0",
+      "version": "0.1.0",
       "transport": {
         "type": "stdio"
       }
