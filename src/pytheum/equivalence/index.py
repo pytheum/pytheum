@@ -1,9 +1,9 @@
 """In-memory index of the verified Kalshi<->Polymarket equivalence dataset.
 
-136,877 pairs loaded at first access (lazy singleton). The dataset lives at
-datasets/equivalence-export.jsonl.gz (git-tracked). Path overridable via
-PYTHEUM_EQUIVALENCE_PATH env var. Missing file -> empty index + file_missing flag,
-never crashes the server.
+Pairs are loaded at first access (lazy singleton) from a local export. No data
+ships in the package: the path is taken from the PYTHEUM_EQUIVALENCE_PATH env var
+(see ``_find_default_path`` for the full resolution order). Missing file -> empty
+index + file_missing flag, never crashes the server.
 """
 from __future__ import annotations
 

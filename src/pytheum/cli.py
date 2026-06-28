@@ -1,17 +1,19 @@
-"""pytheum CLI — standalone offline serve + MCP entrypoint.
+"""pytheum CLI — self-hosted serve + MCP entrypoint.
 
 Usage
 -----
     pytheum serve [--host HOST] [--port PORT] [--mcp]
 
-``pytheum serve`` starts an offline-capable HTTP API that serves the bundled
-equivalence/related/matched/rules/status datasets without any database,
-secrets, or external API keys.
+``pytheum serve`` starts an HTTP API for the equivalence/related/matched/rules/
+status routes. No data ships in the package: point it at a local export via the
+PYTHEUM_EQUIVALENCE_PATH / PYTHEUM_RELATED_PATH env vars to serve real pairs, or
+run with no export configured (routes return empty results). No database or
+external API keys are required.
 
-Routes that are live offline (bundled datasets)
-------------------------------------------------
+Routes that serve the equivalence/related data
+----------------------------------------------
     GET /v1/status                      dataset summary + service version
-    GET /v1/markets/equivalents         collection of 136k+ verified pairs
+    GET /v1/markets/equivalents         collection of verified pairs
     GET /v1/markets/matched             paginated pair browser
     GET /v1/markets/{ref}/equivalents   per-market lookup
     GET /v1/markets/{ref}/rules         resolution rules for both legs
@@ -65,19 +67,21 @@ def _print_banner(
 
     bar = "=" * 60
     print(bar)
-    print(f"  pytheum {ver} — offline serve")
+    print(f"  pytheum {ver} — serve")
     print(bar)
     print(f"  HTTP API:  http://{host}:{port}")
     if mcp_url:
         print(f"  MCP:       {mcp_url}  (streamable-HTTP)")
     print()
-    print("  Bundled datasets:")
+    print("  Datasets (from PYTHEUM_EQUIVALENCE_PATH / PYTHEUM_RELATED_PATH):")
     print(f"    equivalence pairs : {eq_pairs:,}")
     print(f"    related pairs     : {rel_pairs:,}")
     if eq_version:
         print(f"    dataset version   : {eq_version}")
+    if eq_pairs == 0:
+        print("    (no export configured — equivalence/related routes return empty)")
     print()
-    print("  Live routes (bundled data):")
+    print("  Live routes (equivalence/related data):")
     for r in [
         "GET /v1/status",
         "GET /v1/markets/equivalents",
@@ -189,7 +193,7 @@ def main(argv: list[str] | None = None) -> None:
 
     serve_p = sub.add_parser(
         "serve",
-        help="Start the offline HTTP API (no secrets required).",
+        help="Start the serve HTTP API (no secrets required).",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

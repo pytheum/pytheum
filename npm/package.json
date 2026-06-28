@@ -1,6 +1,6 @@
 {
   "name": "@pytheum/mcp",
-  "version": "0.5.0",
+  "version": "0.1.0",
   "mcpName": "io.github.pytheum/mcp",
   "description": "npm-distributed wrapper that runs the pytheum prediction-market MCP server (the `pytheum-mcp` entry point of the `pytheum` PyPI package) via uv",
   "type": "module",
