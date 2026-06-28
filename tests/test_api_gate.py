@@ -47,12 +47,24 @@ def _client(app: Any) -> httpx.AsyncClient:
 # --------------------------------------------------------------------------- #
 
 
-def test_maybe_wrap_off_by_default_is_passthrough() -> None:
+def test_maybe_wrap_passthrough_when_explicitly_disabled() -> None:
     inner = RouterApp(_router())
-    # Explicit defaults: auth off, rate limit 0.
+    # Explicitly disabled (e.g. a single-user self-host): zero-cost pass-through.
     cfg = ServeConfig(require_api_key=False, rate_limit_per_min=0)
     wrapped = maybe_wrap(inner, cfg)
-    assert wrapped is inner  # zero-cost pass-through, same object
+    assert wrapped is inner  # same object, no gate
+
+
+def test_default_config_is_rate_limited_by_default(monkeypatch) -> None:
+    # Hardened default: the gate is ON (per-IP rate limiting) out of the box so the
+    # public/hosted instance is throttled against request floods; auth stays off
+    # (keyless, open-but-rate-limited). Env overrides are cleared to test the field.
+    monkeypatch.delenv("PYTHEUM_RATE_LIMIT_PER_MIN", raising=False)
+    monkeypatch.delenv("PYTHEUM_REQUIRE_API_KEY", raising=False)
+    cfg = ServeConfig()
+    assert cfg.rate_limit_per_min == 120
+    assert cfg.require_api_key is False
+    assert isinstance(maybe_wrap(RouterApp(_router()), cfg), ApiGate)
 
 
 def test_maybe_wrap_wraps_when_auth_on() -> None:

@@ -20,9 +20,12 @@ Design constraints (the load test ran 248 RPS through this path):
 * State is per-process (the service runs single-process; see the MCP server
   module docstring for why).  Multi-worker deploys would need a shared store.
 
-When ``require_api_key`` is False AND ``rate_limit_per_min`` is 0 the gate is a
-zero-cost pass-through (``maybe_wrap`` returns the inner app unchanged), so the
-current deployment behaves identically to before.
+Rate limiting is ON by default (``rate_limit_per_min`` defaults to 120 — per-IP
+token bucket, keyless, "open but throttled") so any deploy, including the public
+hosted instance, is protected against request floods out of the box.  When
+``require_api_key`` is False AND ``rate_limit_per_min`` is 0 — an explicit opt-out,
+e.g. a single-user self-host — the gate is a zero-cost pass-through (``maybe_wrap``
+returns the inner app unchanged).
 """
 from __future__ import annotations
 

@@ -185,14 +185,16 @@ class ServeConfig(BaseSettings):
         ),
     )
     rate_limit_per_min: int = Field(
-        default=0,
+        default=120,
         validation_alias="PYTHEUM_RATE_LIMIT_PER_MIN",
         description=(
             "Sustained per-client request rate (requests/minute) for the HTTP "
             "API token-bucket limiter.  Client identity = API key when present, "
-            "else source IP.  0 (the default) disables rate limiting so the "
-            "current deploy is unaffected; 120 is a sensible enabled value "
-            "(PYTHEUM_RATE_LIMIT_PER_MIN)."
+            "else source IP.  Defaults to 120 (2 req/s sustained, burst below) so "
+            "any deploy — including the public hosted instance — is throttled "
+            "against request floods out of the box; access stays keyless "
+            "(require_api_key off) so it's open-but-rate-limited.  Set 0 to "
+            "disable, e.g. a single-user self-host (PYTHEUM_RATE_LIMIT_PER_MIN)."
         ),
     )
     rate_limit_burst: int = Field(

@@ -29,7 +29,10 @@ a **per-IP token-bucket** limit:
 - The limiter is per-process and the service runs single-process by design; do
   not assume higher effective limits.
 
-The **local offline server** (`pytheum serve`) has no rate limit — it is yours.
+The **local offline server** (`pytheum serve`) defaults to a per-IP **120
+requests/minute** limit (burst 120) so a *public* self-host is throttled out of the
+box too; access stays keyless (no API key required). For a single-user / offline
+deploy set `PYTHEUM_RATE_LIMIT_PER_MIN=0` to disable it — it's yours.
 
 ## Data freshness & point-in-time disclosure
 
