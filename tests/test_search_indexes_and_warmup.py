@@ -30,7 +30,7 @@ def test_warmup_ping_ok(monkeypatch):
             return b'{"equivalence":{"pairs_loaded":142179}}'
 
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _Resp())
-    ok, ms, detail = warmup_ping.ping("https://x")
+    ok, ms, detail = warmup_ping.ping("https://x", "/v1/status")
     assert ok is True
     assert "142179" in detail
     assert ms >= 0
@@ -41,6 +41,6 @@ def test_warmup_ping_failure_is_reported_not_raised(monkeypatch):
         raise OSError("connection refused")
 
     monkeypatch.setattr(urllib.request, "urlopen", _boom)
-    ok, ms, detail = warmup_ping.ping("https://x")
+    ok, ms, detail = warmup_ping.ping("https://x", "/v1/status")
     assert ok is False
     assert "connection refused" in detail
