@@ -140,6 +140,21 @@ def market_event_key(row: dict[str, Any]) -> str:
     return str(row.get("market_id", ""))
 
 
+def parse_payload(payload: Any) -> dict[str, Any] | None:
+    """Parse a market ``payload`` to a dict ONCE. The DB stores payload as a JSON string
+    (asyncpg returns jsonb as text), and every ``*_from_payload`` helper re-parses it on each
+    call — so a handler pulling N fields from one payload does N json.loads of a large blob. Parse
+    once here and pass the resulting dict to the helpers (they skip their own parse on a dict). A
+    dict passes through; absent/malformed → None. Measured: cuts the search handler from ~5 parses
+    per row to 1."""
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return None
+    return payload if isinstance(payload, dict) else None
+
+
 def implied_yes_from_payload(payload: Any) -> float | None:
     """Best-effort YES implied probability from a market's stored `payload`.
 

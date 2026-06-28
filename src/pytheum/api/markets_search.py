@@ -29,6 +29,7 @@ from pytheum.api.params import (
     market_event_key,
     parse_csv_list,
     parse_limit,
+    parse_payload,
     resolution_from_payload,
     resolution_horizon,
     resolution_status_from_payload,
@@ -112,6 +113,11 @@ async def handle_markets_search(
         # normalize to `id` so the row matches /screen's contract + the annotators.
         mid = r.get("market_id") or r.get("id")
         days_to_resolution, is_stale = resolution_horizon(r.get("resolution_at"))
+        # Parse the payload ONCE (it's a JSON string from the DB) and feed the dict to every
+        # *_from_payload helper — they each re-parse a string but pass a dict straight through. On
+        # a common-term page (50 rows) this is 50 parses instead of ~250 (the residual after the
+        # late-materialization fix).
+        pl = parse_payload(r.get("payload"))
         markets.append({
             "id": mid,
             "question": r.get("question"),
@@ -126,12 +132,12 @@ async def handle_markets_search(
                               if hasattr(r.get("resolution_at"), "isoformat") else r.get("resolution_at")),
             "days_to_resolution": days_to_resolution,
             "is_stale": is_stale,
-            "implied_yes": implied_yes_from_payload(r.get("payload")),
-            "book": book_from_payload(r.get("payload")),
-            "resolution": (resolution_from_payload(r.get("payload")) or "")[
+            "implied_yes": implied_yes_from_payload(pl),
+            "book": book_from_payload(pl),
+            "resolution": (resolution_from_payload(pl) or "")[
                 :_SCAN_RESOLUTION_CHARS] or None,
-            "resolution_status": resolution_status_from_payload(r.get("payload")),
-            "condition_id": condition_id_from_payload(r.get("payload")),
+            "resolution_status": resolution_status_from_payload(pl),
+            "condition_id": condition_id_from_payload(pl),
             "event_key": market_event_key({**r, "market_id": mid}),
         })
 
