@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchd agent: keep the hosted serve instance warm (prevent scale-to-zero cold
+     starts — the FDE audit measured ~11s on the first request after idle, 66ms warm).
+     Runs the one-shot warmup_ping (keyless GET /v1/status) every 240s, comfortably under
+     the host's idle timeout. The script is stdlib-only.
+     Install: cp this to ~/Library/LaunchAgents/ and
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.pytheum.warmup-ping.plist
+     Remove:  launchctl bootout gui/$(id -u)/com.pytheum.warmup-ping
+     Run once now: launchctl kickstart gui/$(id -u)/com.pytheum.warmup-ping
+     (A cloud uptime monitor hitting /v1/status is more robust — independent of this box
+      being awake — but this is the immediately-available keep-alive on the ops box.) -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.pytheum.warmup-ping</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/kanagn/Desktop/pytheum/.venv/bin/python</string>
+    <string>/Users/kanagn/Desktop/pytheum/scripts/warmup_ping.py</string>
+    <string>--base</string>
+    <string>https://api.pytheum.com</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>240</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/kanagn/Desktop/pytheum/logs/warmup-ping.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/kanagn/Desktop/pytheum/logs/warmup-ping.err</string>
+</dict>
+</plist>
