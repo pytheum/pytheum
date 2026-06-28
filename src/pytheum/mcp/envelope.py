@@ -48,6 +48,19 @@ def _envelope_enabled() -> bool:
     return os.environ.get("PYTHEUM_MCP_ENVELOPE", "1") != "0"
 
 
+# Optional per-tool usage hook, registered by the server at startup. Called with
+# the tool name on every dispatch; kept generic + best-effort so envelope.py has
+# no dependency on the server. A None hook (e.g. stdio/tests) is a no-op.
+_usage_hook: Callable[[str], None] | None = None
+
+
+def set_usage_hook(hook: Callable[[str], None] | None) -> None:
+    """Register (or clear) the per-tool usage emitter. Best-effort: hook failures
+    must never affect a tool call (the hook itself is expected to swallow errors)."""
+    global _usage_hook
+    _usage_hook = hook
+
+
 def _meta(elapsed_ms: float) -> dict[str, Any]:
     return {
         "generated_at": datetime.now(UTC).isoformat(),
@@ -93,6 +106,11 @@ def enveloped(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]
 
     @functools.wraps(fn)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if _usage_hook is not None:
+            try:
+                _usage_hook(command)
+            except Exception:  # usage logging must never affect the tool call
+                pass
         if not _envelope_enabled():
             return await fn(*args, **kwargs)
         start = time.monotonic()
