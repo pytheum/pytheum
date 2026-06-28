@@ -34,10 +34,18 @@ from pytheum.api.params import (
     resolution_horizon,
     resolution_status_from_payload,
 )
+from pytheum.trader.cache import SingleFlightCache
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 _SCAN_RESOLUTION_CHARS = 240
+# Response cache (#search): the search pipeline (DAO + 3 annotators + serialize) re-ran on EVERY
+# request — the slow high-cardinality terms (bitcoin/fed/election) that agents hammer never
+# recovered on repeat (the "warm" speedup was only Postgres buffer-cache, not a response cache).
+# Cache the whole assembled response, coalesced + bounded, keyed on the actual query dimensions.
+# 30s TTL: the embedded quote-staleness/moves are ~that fresh anyway (matches whale-trades' 30s).
+_cache = SingleFlightCache()
+_TTL_SEARCH: float = 30.0
 # The DAO AND-matches at most 4 tokens against the title; tokenizing more than
 # that is wasted work (and over-narrows). Mirror the DAO's cap here so the meta
 # block honestly reports which tokens actually filtered.
@@ -55,6 +63,7 @@ async def handle_markets_search(
     query: dict[str, str],
     *,
     dao: Any,
+    _cache: SingleFlightCache = _cache,
 ) -> tuple[int, dict[str, Any]]:
     """GET /v1/markets/search handler.
 
@@ -105,6 +114,25 @@ async def handle_markets_search(
             "meta": {"degraded": True, "degraded_reason": "search_unavailable", "query": raw_q},
         }
 
+    # Cache the whole assembled response per query-dimension tuple. Concurrent identical searches
+    # coalesce to one DAO+annotate pass (SingleFlight); repeats inside the TTL skip it entirely.
+    cache_key = ("markets_search", tuple(tokens), tuple(venues or ()), status, limit)
+
+    async def _fetch() -> dict[str, Any]:
+        return await _search_and_assemble(
+            search, dao, tokens=tokens, venues=venues, statuses=statuses,
+            limit=limit, raw_q=raw_q, status=status)
+
+    result = await _cache.get_or_fetch(cache_key, _TTL_SEARCH, _fetch)
+    return 200, result
+
+
+async def _search_and_assemble(
+    search: Any, dao: Any, *, tokens: list[str], venues: list[str] | None,
+    statuses: list[str] | None, limit: int, raw_q: str, status: str | None,
+) -> dict[str, Any]:
+    """Run the DAO search + the /screen enrichment chain + dedup, returning the response body.
+    Pure of HTTP concerns so the handler can cache it as one unit."""
     rows = await search(tokens, venues=venues, statuses=statuses, limit=limit)
 
     markets: list[dict[str, Any]] = []
@@ -150,7 +178,7 @@ async def handle_markets_search(
     pre_dedup = len(markets)
     markets = dedupe_markets_by_question(markets)
 
-    return 200, {
+    return {
         "markets": markets,
         "count": len(markets),
         "meta": {
