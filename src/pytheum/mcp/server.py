@@ -20,13 +20,16 @@ WARNING — PER-PROCESS RATE LIMITER:
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import hashlib
+import json
 import os
 import time
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from pytheum.mcp.envelope import enveloped
+from pytheum.mcp.envelope import enveloped, set_usage_hook
 from pytheum.mcp.guide import agent_guide
 from pytheum.mcp.tools import (
     bundle_context,
@@ -322,6 +325,36 @@ def _client_ip(scope: dict) -> str:
     return client[0] if client else "unknown"
 
 
+# --------------------------------------------------------------------------
+# Per-tool usage emitter (feeds per-tool traction). One best-effort JSONL line
+# per tool call: {"ts", "tool", "ip_hash"}. Fully non-blocking + swallows every
+# failure — a logging problem must NEVER affect a tool call.
+# --------------------------------------------------------------------------
+_USAGE_LOG = os.environ.get("PYTHEUM_USAGE_LOG", "/var/log/pytheum/tool_usage.jsonl")
+_USAGE_SALT = os.environ.get("PYTHEUM_USAGE_SALT", "pytheum-usage-v1")
+# The current request's client IP, set by the ASGI rate-limit wrapper (which
+# already extracts it) and read at tool dispatch. A ContextVar is loop- and
+# task-safe; defaults to "unknown" when no request scope is in flight.
+_current_ip: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "pytheum_current_ip", default="unknown")
+
+
+def _ip_hash(ip: str) -> str:
+    return hashlib.sha256((_USAGE_SALT + ip).encode("utf-8")).hexdigest()[:16]
+
+
+def _emit_usage(tool: str) -> None:
+    """Append one usage event for ``tool`` to the usage log. Best-effort: any
+    failure (unwritable path, missing dir, encoding) is silently swallowed."""
+    try:
+        line = json.dumps({"ts": time.time(), "tool": tool,
+                           "ip_hash": _ip_hash(_current_ip.get())})
+        with open(_USAGE_LOG, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:  # never let usage logging affect the tool call
+        pass
+
+
 def _allow(ip: str) -> bool:
     now = time.monotonic()
     tokens, last = _buckets.get(ip, (_RL_BURST, now))
@@ -381,19 +414,25 @@ def _build_http_app() -> Any:
     )
 
     async def app(scope, receive, send):  # thin ASGI rate-limit wrapper
-        if scope["type"] == "http" and not _allow(_client_ip(scope)):
-            await send({"type": "http.response.start", "status": 429,
-                        "headers": [(b"content-type", b"application/json"),
-                                    (b"retry-after", b"5"),
-                                    # CORS on the 429 too, or a rate-limited
-                                    # browser client sees an opaque failure.
-                                    (b"access-control-allow-origin", b"*")]})
-            await send({"type": "http.response.body",
-                        "body": b'{"error":"rate_limited","retry_after_s":5}'})
-            return
+        if scope["type"] == "http":
+            ip = _client_ip(scope)
+            # Make the IP available to the per-tool usage emitter at dispatch.
+            _current_ip.set(ip)
+            if not _allow(ip):
+                return await _send_rate_limited(send)
         await inner(scope, receive, send)  # http (allowed) + lifespan pass through
 
     return app
+
+
+async def _send_rate_limited(send) -> None:
+    """Emit the 429 (with CORS so a browser client doesn't see an opaque fail)."""
+    await send({"type": "http.response.start", "status": 429,
+                "headers": [(b"content-type", b"application/json"),
+                            (b"retry-after", b"5"),
+                            (b"access-control-allow-origin", b"*")]})
+    await send({"type": "http.response.body",
+                "body": b'{"error":"rate_limited","retry_after_s":5}'})
 
 
 def http_main() -> None:
@@ -407,6 +446,9 @@ def http_main() -> None:
     # 127.0.0.1 and Caddy (api.pytheum.com TLS) is the only ingress. Disable it.
     mcp.settings.transport_security = TransportSecuritySettings(
         enable_dns_rebinding_protection=False)
+
+    # Best-effort per-tool usage tracking (remote connector only).
+    set_usage_hook(_emit_usage)
 
     app = _build_http_app()
     port = int(os.environ.get("PYTHEUM_MCP_HTTP_PORT", "8444"))
