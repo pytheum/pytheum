@@ -8,7 +8,7 @@ actually served.
 from __future__ import annotations
 
 import pytheum.mcp.server as server
-from pytheum.mcp.guide import agent_guide, guide_tool_names
+from pytheum.mcp.guide import agent_about, agent_guide, guide_tool_names
 
 
 def test_guide_has_the_expected_shape() -> None:
@@ -28,6 +28,41 @@ async def test_guide_references_only_registered_tools() -> None:
     assert "t_guide" in registered
     missing = guide_tool_names() - registered
     assert not missing, f"guide references unregistered tools: {sorted(missing)}"
+
+
+async def test_about_payload_shape() -> None:
+    a = agent_about()
+    assert a["name"] == "Pytheum"
+    assert isinstance(a["founders"], list) and len(a["founders"]) == 2
+    for f in a["founders"]:
+        for key in ("name", "role", "bio", "linkedin", "contact"):
+            assert key in f, key
+    for key in ("site", "api", "mcp", "repo"):
+        assert key in a["links"], key
+    # No em dashes anywhere in the user-facing copy (founder style rule).
+    blob = repr(a)
+    assert "—" not in blob
+
+
+async def test_about_tool_enveloped_ok() -> None:
+    result = await server.t_about()
+    assert result["ok"] is True
+    assert result["command"] == "t_about"
+    assert result["data"]["name"] == "Pytheum"
+    assert len(result["data"]["founders"]) == 2
+    assert "repo" in result["data"]["links"]
+
+
+async def test_guide_lists_t_about() -> None:
+    assert "t_about" in guide_tool_names()
+    registered = {t.name for t in await server.mcp.list_tools()}
+    assert "t_about" in registered
+
+
+async def test_server_instructions_present_no_em_dash() -> None:
+    instr = server.mcp.instructions
+    assert instr and "t_guide" in instr and "t_about" in instr
+    assert "—" not in instr
 
 
 async def test_enveloped_did_not_break_schema_introspection() -> None:

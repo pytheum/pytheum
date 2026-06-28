@@ -24,6 +24,7 @@ _TOOL_GROUPS: list[dict[str, Any]] = [
             {"name": "t_status", "use": "Service health + dataset freshness. Call FIRST."},
             {"name": "t_quality", "use": "Dataset quality/integrity: fungible-vs-judged tier split, enforced invariants, honest precision posture."},
             {"name": "t_guide", "use": "This playbook."},
+            {"name": "t_about", "use": "Who Pytheum is, the mission/vision, and who is building it."},
         ],
     },
     {
@@ -152,6 +153,27 @@ def agent_guide() -> dict[str, Any]:
         },
         "tool_groups": _TOOL_GROUPS,
         "workflows": _WORKFLOWS,
+    }
+
+
+def agent_about() -> dict[str, Any]:
+    """Return the local "who is Pytheum" brief (no network). Live numbers are
+    intentionally NOT hardcoded here: point agents at t_status / t_quality."""
+    return {
+        "name": "Pytheum",
+        "mission": "The information substrate for forecasting and prediction-market agents. The data, not the edge.",
+        "what_we_do": "We unify Kalshi, Polymarket, and Manifold into one settlement-verified cross-venue graph, pair every market with real-time world context (news, social, filings, each timestamped), and serve it through a hosted, keyless MCP.",
+        "the_wedge": "An agent on Pytheum gets fresher context than classic web search. Search engines lag on indexing and embedding new information flow, so a Pytheum agent always has the current world-state for a market, plus the same question on the other venue and whether a price gap is real money or a stale wall.",
+        "vision": "Our end goal is full point-in-time market replay: the world exactly as it was before a market resolved, contamination-filtered with no look-ahead. This is the roadmap, not a current capability.",
+        "what_we_are_not": "Not a signal product. We do not sell edges, place orders, or hold funds. Read-only. The model, sizing, and execution are yours.",
+        "data": "Live coverage and freshness via t_status. Graph integrity via t_quality.",
+        "tools": "About 25 t_* tools for discovery, real-time context, cross-venue divergences net of fees, prices and history. Call t_guide to start.",
+        "pricing": "Free to use.",
+        "founders": [
+            {"name": "Ali Bauyrzhan", "role": "Founder", "bio": "Summer SDE Intern at Amazon Ads, previously research at Columbia Business School.", "linkedin": "https://www.linkedin.com/in/alibaur/", "contact": "ab5867@columbia.edu"},
+            {"name": "Konstantinos Anagnostopoulos", "role": "Cofounder", "bio": "SDE at Nebius, previously TA'd a graduate-level databases course as an undergraduate.", "linkedin": "https://www.linkedin.com/in/kon-anagn/", "contact": "ka3037@columbia.edu"},
+        ],
+        "links": {"site": "https://pytheum.com", "api": "https://api.pytheum.com", "mcp": "https://api.pytheum.com/mcp", "repo": "https://github.com/pytheum/pytheum"},
     }
 
 
