@@ -1,6 +1,6 @@
 # pytheum
 
-**The verified prediction-market graph — 136,877 settlement-verified
+**The verified prediction-market graph — ~140k+ settlement-verified
 Kalshi×Polymarket pairs; 1.6M verified connections across 364k markets.**
 
 Every pair is verified by **settlement semantics** — the two markets resolve to
@@ -25,7 +25,7 @@ none publish a precision number.
 
 | Matcher | Cross-venue matching (measured) | Precision published? | Self-hostable? |
 |---|---|---|---|
-| **pytheum** | 136,877 settlement-verified pairs; deterministic structured keys + gates | **Yes** — golden set + trap taxonomy | **Yes** (offline serve from bundled datasets) |
+| **pytheum** | ~140k+ settlement-verified pairs; deterministic structured keys + gates | **Yes** — golden set + trap taxonomy | **Yes** (self-host the SDK against your own export) |
 | PMXT Router (v2.49.9 SDK) | **0/150 recall** — per-market lookup is degenerate (returns a constant popular-markets list regardless of input); bulk catalog real but shallow (7/100 clusters game-like, no structured bet-type depth) | No | No (hosted-only) |
 | Prediction Hunt (free tier) | **`success:false`, `count:0` on every query** (HTTP 200, no error code) — could not extract one match | No | No |
 | Polymarket/Dome | Acquired and discontinued (EOL 2026-04-28; matching endpoints 404) | — | — |
@@ -52,32 +52,68 @@ Requires Python ≥ 3.11.
 
 ---
 
-## Quickstart — standalone offline serve
+## What you get
 
-`pytheum serve` starts an offline HTTP API from the bundled datasets.
-No database, no API keys, no network access required.
+This package is the **client / SDK + MCP server** for the pytheum prediction-market
+graph. It ships **no data** — it talks to the hosted API at
+**`https://api.pytheum.com`** by default, or to a local equivalence/related export
+that you provide for self-hosting (set `PYTHEUM_EQUIVALENCE_PATH` /
+`PYTHEUM_RELATED_PATH`). The pair-matching methodology and benchmarks below
+describe the data the hosted graph serves.
+
+### Easiest path — point an MCP client at the hosted server
+
+No install required. Add to your MCP client config (Claude / Cursor / etc.):
+
+```json
+{
+  "mcpServers": {
+    "pytheum": {
+      "url": "https://api.pytheum.com/mcp"
+    }
+  }
+}
+```
+
+Then call any tool, e.g.:
+
+```
+t_equivalent_markets kalshi:COSTCOHOTDOG-27
+```
+
+### Self-host the serve stack
+
+`pytheum serve` starts a local HTTP API (plus an optional MCP server). With no
+dataset configured the equivalence/related routes return empty results and the
+live-venue routes degrade gracefully (no secrets required). To serve real pairs,
+point it at a local export.
 
 ```bash
 pip install pytheum
+
+# Serve against the hosted graph's MCP surface, or self-host with your own export:
+export PYTHEUM_EQUIVALENCE_PATH=/path/to/equivalence-export.jsonl.gz
+export PYTHEUM_RELATED_PATH=/path/to/related-export.jsonl.gz
+
 pytheum serve              # binds http://127.0.0.1:8080
 pytheum serve --port 9090  # custom port
-pytheum serve --mcp        # also start MCP server on port 8444
+pytheum serve --mcp        # also start the MCP server on port 8444
 ```
 
-On startup the banner prints which routes are live vs degraded:
+On startup the banner prints the loaded pair counts (0 when no export is
+configured) and which routes are live vs degraded:
 
 ```
 ============================================================
-  pytheum 0.0.1 — offline serve
+  pytheum 0.1.0 — serve
 ============================================================
   HTTP API:  http://127.0.0.1:8080
 
-  Bundled datasets:
-    equivalence pairs : 136,877
+  Datasets (from PYTHEUM_EQUIVALENCE_PATH / PYTHEUM_RELATED_PATH):
+    equivalence pairs : 139,816
     related pairs     : 1,097
-    dataset version   : 2026-06-12T21:40:00Z
 
-  Live routes (bundled data):
+  Live routes (equivalence/related data):
     GET /v1/status
     GET /v1/markets/equivalents
     GET /v1/markets/matched
@@ -95,11 +131,11 @@ On startup the banner prints which routes are live vs degraded:
 # Look up the Polymarket equivalent of a Kalshi market
 curl http://127.0.0.1:8080/v1/markets/kalshi:COSTCOHOTDOG-27/equivalents
 
-# Browse 136k+ verified pairs, filtered by sport
+# Browse the verified pairs, filtered by sport
 curl "http://127.0.0.1:8080/v1/markets/matched?bet_type=sports&limit=10"
 ```
 
-### MCP connector (Claude / Cursor / etc.)
+### MCP connector (self-hosted)
 
 Start with `--mcp` and point your MCP client at the printed URL:
 
@@ -107,8 +143,6 @@ Start with `--mcp` and point your MCP client at the printed URL:
 pytheum serve --mcp
 # MCP:  http://127.0.0.1:8444/mcp  (streamable-HTTP)
 ```
-
-Add to your MCP client config:
 
 ```json
 {
@@ -120,26 +154,14 @@ Add to your MCP client config:
 }
 ```
 
-Then call any tool, e.g.:
-
-```
-find_equivalent kalshi:COSTCOHOTDOG-27
-```
-
 Full tool inventory: `GET http://127.0.0.1:8080/llms.txt`
-
-### Hosted MCP (always-on)
-
-```
-https://api.pytheum.com/mcp
-```
 
 ---
 
 ## Tools / routes
 
-The offline serve exposes the bundled-data routes; the full hosted API adds the
-live trader-analytics and OHLCV tiers. Core surface:
+The self-hosted serve exposes the equivalence/related routes; the full hosted API
+adds the live trader-analytics and OHLCV tiers. Core surface:
 
 | Route | Returns |
 |---|---|
@@ -186,7 +208,7 @@ from pytheum.routing import RouterApp
 registry = RouterRegistry()
 
 async def handle_status(query: dict) -> tuple[int, dict]:
-    return 200, {"status": "ok", "pairs": 136877}
+    return 200, {"status": "ok", "pairs": 139816}
 
 registry.add(RouteSpec("GET", "/v1/status", handle_status, summary="Health check"))
 

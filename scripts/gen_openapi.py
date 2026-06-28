@@ -108,7 +108,7 @@ def build_stub_registry() -> RouterRegistry:
     ))
     reg.add(RouteSpec(
         "GET", "/v1/markets/matched", _stub,
-        summary="Paginated view of all 136k+ settlement-verified cross-venue pairs.",
+        summary="Paginated view of all 140k+ settlement-verified cross-venue pairs.",
         tags=["equivalence"],
         params={
             "league": "Filter by league / domain",
@@ -194,9 +194,9 @@ def build_spec(registry: RouterRegistry) -> dict[str, Any]:
         "openapi": "3.1.0",
         "info": {
             "title": "Pytheum API",
-            "version": "0.0.1",
+            "version": "0.1.0",
             "description": (
-                "The verified prediction-market graph — 136k+ settlement-verified "
+                "The verified prediction-market graph — 140k+ settlement-verified "
                 "cross-venue pairs (Kalshi<->Polymarket), live orderbook quotes, "
                 "news/social context, and trader analytics."
             ),

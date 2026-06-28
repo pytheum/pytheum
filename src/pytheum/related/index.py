@@ -1,9 +1,8 @@
 """In-memory index of the correlated (but NOT settlement-equivalent) cross-venue dataset.
 
-1,097 pairs loaded at first access (lazy singleton). The dataset lives at
-datasets/related-export.jsonl.gz (git-tracked). Path overridable via
-PYTHEUM_RELATED_PATH env var. Missing file -> empty index + file_missing flag,
-never crashes the server.
+Pairs are loaded at first access (lazy singleton) from a local export. No data
+ships in the package: the path is taken from the PYTHEUM_RELATED_PATH env var.
+Missing file -> empty index + file_missing flag, never crashes the server.
 
 Each row carries kalshi_ref/ticker/title, pm_ref/gamma_id/condition_id/slug/title,
 plus the correlation metadata: relation, asset, date, kalshi_band, pm_band,

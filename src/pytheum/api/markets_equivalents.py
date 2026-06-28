@@ -6,7 +6,7 @@ GET /v1/markets/equivalents
     Collection-level: returns the full live-filtered equivalence set joined to
     live quotes. t_find_divergences consumes this for the verified-pair
     divergence scan (#247). Pairs are pre-decided by the cross-venue matcher
-    (136,877 pairs in the 2026-06-12 export); we don't match here.
+    (~140k+ pairs in the export); we don't match here.
 
 GET /v1/markets/{ref}/equivalents
     Per-ref: given a market ref on either venue, return its settlement-verified
@@ -231,8 +231,8 @@ async def handle_markets_equivalents(
 ) -> tuple[int, dict[str, Any]]:
     """GET /v1/markets/equivalents — collection of verified cross-venue pairs.
 
-    ``equivalence`` accepts an EquivalenceIndex (136,877 pairs, loaded from
-    the matcher export file).  When provided, pairs are sourced from the index
+    ``equivalence`` accepts an EquivalenceIndex (loaded from the matcher export
+    file).  When provided, pairs are sourced from the index
     (faster, avoids a DB join).  When omitted the handler falls back to
     ``dao.fetch_equivalence_pairs()`` — the original DB-backed path still used
     by tests and any caller that doesn't have the index mounted.
