@@ -110,7 +110,7 @@ configured) and which routes are live vs degraded:
   HTTP API:  http://127.0.0.1:8080
 
   Datasets (from PYTHEUM_EQUIVALENCE_PATH / PYTHEUM_RELATED_PATH):
-    equivalence pairs : 141,844
+    equivalence pairs : 142,179
     related pairs     : 1,097
 
   Live routes (equivalence/related data):
@@ -208,7 +208,7 @@ from pytheum.routing import RouterApp
 registry = RouterRegistry()
 
 async def handle_status(query: dict) -> tuple[int, dict]:
-    return 200, {"status": "ok", "pairs": 141844}
+    return 200, {"status": "ok", "pairs": 142179}
 
 registry.add(RouteSpec("GET", "/v1/status", handle_status, summary="Health check"))
 

@@ -45,7 +45,7 @@ def test_is_stale_bad_value():
 
 
 class _FakeEquivalence:
-    pairs_loaded = 141844
+    pairs_loaded = 142179
     dataset_version = "2026-06-10T12:00:00Z"
     file_missing = False
     load_error = None
@@ -110,7 +110,7 @@ async def test_handler_equivalence_block():
     dao = _FakeDaoNoStats()
     _, body = await handle_status({}, dao=dao, equivalence=_FakeEquivalence())
     eq = body["equivalence"]
-    assert eq["pairs_loaded"] == 141844
+    assert eq["pairs_loaded"] == 142179
     assert eq["dataset_version"] == "2026-06-10T12:00:00Z"
 
 
