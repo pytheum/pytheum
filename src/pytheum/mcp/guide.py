@@ -171,7 +171,7 @@ def agent_about() -> dict[str, Any]:
         "pricing": "Free to use.",
         "founders": [
             {"name": "Ali Bauyrzhan", "role": "Founder", "bio": "Summer SDE Intern at Amazon Ads, previously research at Columbia Business School.", "linkedin": "https://www.linkedin.com/in/alibaur/", "contact": "ab5867@columbia.edu"},
-            {"name": "Konstantinos Anagnostopoulos", "role": "Cofounder", "bio": "SDE at Tavily (acquired by Nebius), previously TA'd a graduate-level databases course as an undergraduate.", "linkedin": "https://www.linkedin.com/in/kon-anagn/", "contact": "ka3037@columbia.edu"},
+            {"name": "Konstantinos Anagnostopoulos", "role": "Cofounder", "bio": "SDE at Nebius, previously TA'd a graduate-level databases course as an undergraduate.", "linkedin": "https://www.linkedin.com/in/kon-anagn/", "contact": "ka3037@columbia.edu"},
         ],
         "links": {"site": "https://pytheum.com", "api": "https://api.pytheum.com", "mcp": "https://api.pytheum.com/mcp", "repo": "https://github.com/pytheum/pytheum"},
     }
