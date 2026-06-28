@@ -73,6 +73,24 @@ def build_stub_registry() -> RouterRegistry:
         tags=["meta"],
     ))
     reg.add(RouteSpec(
+        "GET", "/v1/about", _stub,
+        summary=(
+            "Who Pytheum is: mission, vision, what we do and do not do, and the "
+            "founders. Same payload as the t_about MCP tool, callable over plain "
+            "HTTP with no install."
+        ),
+        tags=["meta"],
+    ))
+    reg.add(RouteSpec(
+        "GET", "/v1/guide", _stub,
+        summary=(
+            "Self-onboarding playbook: principles, conventions, the tool "
+            "inventory grouped by job, and workflow recipes. Same payload as the "
+            "t_guide MCP tool, callable over plain HTTP with no install."
+        ),
+        tags=["meta"],
+    ))
+    reg.add(RouteSpec(
         "GET", "/v1/markets/screen", _stub,
         summary="Structured market screen: filter by venue, status, volume, liquidity.",
         tags=["markets"],

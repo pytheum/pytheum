@@ -41,6 +41,8 @@ __all__ = ["ApiGate", "maybe_wrap"]
 _KEYLESS_PATHS: frozenset[str] = frozenset({
     "/v1/status",
     "/v1/metrics",
+    "/v1/about",
+    "/v1/guide",
     "/healthz",
     "/llms.txt",
 })

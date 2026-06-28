@@ -34,6 +34,7 @@ from pytheum.api.markets_screen import handle_markets_screen
 from pytheum.api.markets_search import handle_markets_search
 from pytheum.api.markets_trades import handle_market_trades
 from pytheum.api.markets_whale_trades import handle_market_whale_trades
+from pytheum.api.meta import handle_about, handle_guide
 from pytheum.api.metrics import handle_metrics
 from pytheum.api.quality import handle_quality
 from pytheum.api.status import handle_status
@@ -63,6 +64,12 @@ def register_group_A(
 
     async def _metrics(query: dict[str, str]) -> tuple[int, dict[str, Any]]:
         return await handle_metrics(query)
+
+    async def _about(query: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        return await handle_about(query)
+
+    async def _guide(query: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        return await handle_guide(query)
 
     async def _markets_equivalents(query: dict[str, str]) -> tuple[int, dict[str, Any]]:
         return await handle_markets_equivalents(query, dao=dao, equivalence=equivalence)
@@ -101,6 +108,24 @@ def register_group_A(
         summary=(
             "Upstream venue-call counters (kalshi/polymarket): requests, cache "
             "hits, coalesced joins, real upstream calls, errors — keyless."
+        ),
+        tags=["meta"],
+    ))
+    registry.add(RouteSpec(
+        "GET", "/v1/about", _about,
+        summary=(
+            "Who Pytheum is: mission, vision, what we do and do not do, and the "
+            "founders. Same payload as the t_about MCP tool, callable over plain "
+            "HTTP with no install."
+        ),
+        tags=["meta"],
+    ))
+    registry.add(RouteSpec(
+        "GET", "/v1/guide", _guide,
+        summary=(
+            "Self-onboarding playbook: principles, conventions, the tool "
+            "inventory grouped by job, and workflow recipes. Same payload as the "
+            "t_guide MCP tool, callable over plain HTTP with no install."
         ),
         tags=["meta"],
     ))
