@@ -38,6 +38,7 @@ __all__ = [
     "normalize_pm_activity",
     "normalize_pm_value",
     "normalize_pm_whale_trades",
+    "normalize_kalshi_whale_trades",
 ]
 
 
@@ -196,6 +197,45 @@ def normalize_kalshi_oi(
         "ref": ref,
         "source": "live",
     }
+
+
+def normalize_kalshi_whale_trades(
+    body: dict[str, Any],
+    *,
+    min_usd: float,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Whale (large-notional) trades from a Kalshi /markets/trades body. Kalshi trades are
+    ANONYMOUS — no wallet/trader identity (unlike Polymarket). Filters notional_usd >= min_usd,
+    sorts DESCENDING by notional_usd, returns top `limit`."""
+    raw: list[dict[str, Any]] = body.get("trades") or []
+    survivors: list[dict[str, Any]] = []
+    for item in raw:
+        # Parse price/size/side exactly as normalize_kalshi_trades does.
+        taker_side = str(item.get("taker_side") or "yes").lower()
+        if taker_side == "yes":
+            price = _safe_float(item.get("yes_price_dollars"))
+        else:
+            price = _safe_float(item.get("no_price_dollars"))
+        size = _safe_float(item.get("count_fp") or item.get("count"))
+        if price is None or size is None:
+            continue
+        notional_usd = round(price * size, 4)
+        if notional_usd < min_usd:
+            continue
+
+        ts = item.get("created_time") or item.get("trade_date")
+        ticker = item.get("ticker")
+        survivors.append({
+            "ts": str(ts) if ts is not None else None,
+            "market": f"kalshi:{ticker}" if ticker else None,
+            "price": round(price, 6),
+            "size": round(size, 4),
+            "notional_usd": notional_usd,
+            "side": "BUY" if taker_side == "yes" else "SELL",
+        })
+    survivors.sort(key=lambda t: t["notional_usd"], reverse=True)
+    return survivors[:limit]
 
 
 # ── Polymarket ──────────────────────────────────────────────────────────────
