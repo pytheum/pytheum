@@ -30,7 +30,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from pytheum.mcp.envelope import enveloped, set_usage_hook
-from pytheum.mcp.guide import agent_guide
+from pytheum.mcp.guide import agent_about, agent_guide
 from pytheum.mcp.tools import (
     bundle_context,
     context_batch,
@@ -61,7 +61,20 @@ from pytheum.mcp.tools import (
 
 DEFAULT_BASE = os.environ.get("PYTHEUM_API_BASE", "https://api.pytheum.com")
 
-mcp = FastMCP("pytheum")
+# Surfaced by MCP clients on connect (the auto-read server instructions). Kept
+# lean: orient a cold agent, then point at the onboarding tools for the rest.
+_INSTRUCTIONS = (
+    "Pytheum is the information substrate for prediction-market and forecasting "
+    "agents: a settlement-verified cross-venue graph across Kalshi, Polymarket, "
+    "and Manifold, with every market paired to fresh real-time world context. An "
+    "agent here gets fresher context than classic web search. New to this server? "
+    "Call t_guide for the full tool playbook and conventions, t_status for live "
+    "coverage and freshness, t_quality for data integrity, and t_about for the "
+    "mission and who is building this. Market refs are <venue>:<id>, for example "
+    "kalshi:KXFED-24DEC-525."
+)
+
+mcp = FastMCP("pytheum", instructions=_INSTRUCTIONS)
 
 
 @mcp.tool()
@@ -303,6 +316,13 @@ async def t_quality() -> dict:
 async def t_guide() -> dict:
     """Self-onboarding playbook for an agent landing on pytheum cold — CALL THIS FIRST if you're unsure where to start. Local, no network. Returns: `summary` (what pytheum is), `principles` (operating rules — e.g. market_ref must be venue-prefixed; equivalence is the core; confirm settlement+staleness before trading a spread; this server is read-only), `conventions` (the market_ref format + the {ok,command,data,meta} response-envelope contract every tool returns), `tool_groups` (the full tool inventory grouped by job: health / discover / market_detail / cross_venue_equivalence / microstructure / flow_and_traders / events_and_batch), and `workflows` (ordered step recipes for common goals: find+validate a cross-venue arb, check if a market exists on the other venue, research one market, find today's movers)."""
     return agent_guide()
+
+
+@mcp.tool()
+@enveloped
+async def t_about() -> dict:
+    """Who Pytheum is, what the data covers, why it exists, and who is building it."""
+    return agent_about()
 
 
 def main() -> None:
