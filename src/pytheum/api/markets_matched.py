@@ -174,7 +174,7 @@ def _hydrate_side(
 
 
 def _cross_venue(
-    k_block: dict[str, Any], pm_block: dict[str, Any]
+    k_block: dict[str, Any], pm_block: dict[str, Any], *, bet_type: str | None = None
 ) -> dict[str, Any]:
     """Build the cross_venue spread block."""
     cv: dict[str, Any] = {}
@@ -193,7 +193,7 @@ def _cross_venue(
     # Positive = a real arb; ≤0 = the mid-spread was a phantom. Only emitted when
     # BOTH legs have a two-sided book. Mirrors t_find_divergences so the radar and
     # the scanner agree.
-    net = locked_arb_net_edge(k_block.get("book"), pm_block.get("book"))
+    net = locked_arb_net_edge(k_block.get("book"), pm_block.get("book"), bet_type=bet_type)
     if net is not None:
         cv["net_edge"] = net
         cv["executable"] = net > 0
@@ -372,7 +372,7 @@ async def handle_markets_matched(
         pm_block = _hydrate_side(
             pm_ref, pair.get("pm_title"), "polymarket", pm_row
         )
-        cv = _cross_venue(k_block, pm_block)
+        cv = _cross_venue(k_block, pm_block, bet_type=pair.get("bet_type"))
 
         # live = both legs currently active in the store. Settled markets keep
         # their lifetime volume_usd, so a pure volume sort ranks dead 2022-24

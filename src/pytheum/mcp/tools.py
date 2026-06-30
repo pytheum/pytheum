@@ -11,6 +11,12 @@ from urllib.parse import quote, urlencode
 
 import httpx
 
+from pytheum.economics.fees import (
+    KALSHI_GENERAL_COEFF,
+    pm_fee_rate_for_bet_type,
+    pm_taker_fee,
+)
+
 DEFAULT_BASE = os.environ.get("PYTHEUM_API_BASE", "https://api.pytheum.com")
 
 # Shared, lazily-created httpx client. A fresh AsyncClient per call forced a new
@@ -230,32 +236,34 @@ def _coerce_venues(venues: str | list[str] | None) -> str | None:
     return None
 
 
-def _row_fee_bps(venue: Any, implied_yes: Any) -> float | None:
+def _row_fee_bps(venue: Any, implied_yes: Any, *, bet_type: Any = None) -> float | None:
     """Approximate taker fee in bps of the $1 notional, so an agent can turn a
-    GROSS cross-venue edge into a NET one (every trader probe quoted gross edges
-    and flagged they're optimistic without fees). Polymarket charges no trading
-    fee today (gas only) -> 0. Kalshi's general schedule is ~0.07*p*(1-p) per
-    contract -> 700*p*(1-p) bps of the $1 notional (price-dependent; some series
-    differ, so this is an estimate). Manifold is play-money -> None."""
-    if venue == "polymarket":
-        return 0.0
+    GROSS cross-venue edge into a NET one. Fee rates are the doc-verified 2026
+    schedules (single source of truth: pytheum.economics.fees). Polymarket is NO
+    LONGER 0% — it charges a category-dependent taker fee (rate keyed off bet_type);
+    Kalshi's general schedule is 0.07*p*(1-p) -> 700*p*(1-p) bps. Manifold is
+    play-money -> None."""
+    if venue == "polymarket" and isinstance(implied_yes, (int, float)) and 0 < implied_yes < 1:
+        rate = pm_fee_rate_for_bet_type(bet_type)
+        return round(rate * 1e4 * implied_yes * (1 - implied_yes), 1)
     if venue == "kalshi" and isinstance(implied_yes, (int, float)) and 0 < implied_yes < 1:
-        return round(700 * implied_yes * (1 - implied_yes), 1)
+        return round(KALSHI_GENERAL_COEFF * 1e4 * implied_yes * (1 - implied_yes), 1)
     return None
 
 
-def _fee_dollars(venue: Any, price: Any) -> float | None:
+def _fee_dollars(venue: Any, price: Any, *, bet_type: Any = None) -> float | None:
     """Taker fee in DOLLARS per $1-notional contract AT a given execution price.
-    Polymarket: 0 (no trading fee). Kalshi: 0.07*p*(1-p) general schedule.
-    Manifold/unknown: None (play money)."""
-    if venue == "polymarket":
-        return 0.0
+    Polymarket: category-dependent taker fee (2026 schedule; rate keyed off bet_type,
+    makers 0%). Kalshi: 0.07*p*(1-p) general schedule. Manifold/unknown: None.
+    Rates sourced from pytheum.economics.fees (single source of truth)."""
+    if venue == "polymarket" and isinstance(price, (int, float)) and 0 < price < 1:
+        return pm_taker_fee(price, fee_rate=pm_fee_rate_for_bet_type(bet_type))
     if venue == "kalshi" and isinstance(price, (int, float)) and 0 < price < 1:
-        return 0.07 * price * (1 - price)
+        return KALSHI_GENERAL_COEFF * price * (1 - price)
     return None
 
 
-def _net_book(venue: Any, book: Any) -> None:
+def _net_book(venue: Any, book: Any, *, bet_type: Any = None) -> None:
     """In-place: add fee-adjusted all-in prices to a book so an agent reads net
     edge instead of recomputing it (trader wishlist #1). yes_ask_net = cost to
     BUY yes (ask + fee@ask); no_ask_net = cost to BUY no (1-bid + fee); yes_bid_net
@@ -266,15 +274,15 @@ def _net_book(venue: Any, book: Any) -> None:
         return
     ask, bid = book.get("ask"), book.get("bid")
     if isinstance(ask, (int, float)):
-        f = _fee_dollars(venue, ask)
+        f = _fee_dollars(venue, ask, bet_type=bet_type)
         if f is not None:
             book["yes_ask_net"] = round(ask + f, 4)
     if isinstance(bid, (int, float)):
-        f = _fee_dollars(venue, bid)
+        f = _fee_dollars(venue, bid, bet_type=bet_type)
         if f is not None:
             book["yes_bid_net"] = round(bid - f, 4)
         no_ask = 1 - bid
-        f2 = _fee_dollars(venue, no_ask)
+        f2 = _fee_dollars(venue, no_ask, bet_type=bet_type)
         if f2 is not None:
             book["no_ask_net"] = round(no_ask + f2, 4)
 
@@ -355,10 +363,12 @@ def _enrich_row(r: Any) -> None:
     if isinstance(r, dict) and "venue" in r:
         v = r.get("venue")
         r["is_play_money"] = v in _PLAY_MONEY_VENUES
-        r["taker_fee_bps"] = _row_fee_bps(v, r.get("implied_yes"))
+        r["taker_fee_bps"] = _row_fee_bps(v, r.get("implied_yes"), bet_type=r.get("bet_type"))
         r["volume_unit"] = _VOLUME_UNIT.get(v)
         r["volume_usd_norm"] = _volume_usd_norm(v, r.get("volume_usd"), r.get("implied_yes"))
-        _net_book(v, r.get("book"))  # fee-adjusted all-in prices into the book (#250)
+        # fee-adjusted all-in prices into the book (#250). A standalone market row carries
+        # no bet_type → PM fee uses the conservative default category rate.
+        _net_book(v, r.get("book"), bet_type=r.get("bet_type"))
         # …and on every priced bundle-outcome LEG too — a trader probe had to
         # recompute 1-bid by hand on the World-Cup/NBA ladder legs because only
         # the parent row carried net prices (#237). Legs inherit the parent venue.
@@ -1459,7 +1469,7 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
             parked_excluded += 1
             continue
         for leg in (a, b):
-            _net_book(leg.get("venue"), leg.get("book"))
+            _net_book(leg.get("venue"), leg.get("book"), bet_type=p.get("bet_type"))
         edge = _divergence_edge(a.get("book"), b.get("book"))
         if edge is None or edge < min_net_edge:
             continue

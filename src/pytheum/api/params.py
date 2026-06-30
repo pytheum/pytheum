@@ -502,10 +502,16 @@ def flow_flag_from_row(row: dict[str, Any]) -> str | None:
 
 
 # Kalshi taker fee follows ~0.07·p·(1−p) per contract (their published curve);
-# Polymarket charges no taker fee. Used to net the cross-venue locked-arb edge so
-# the matched radar reports an EXECUTABLE number, not a mid-spread that dies on
-# fees + one-sided books.
-_KALSHI_FEE_COEF = 0.07
+# Fee model: single source of truth is pytheum.economics.fees (doc-verified 2026
+# schedules). Polymarket is NO LONGER 0% — it charges category-dependent taker fees as
+# of 2026 (crypto Jan / sports Feb / +8 categories Mar). Used to net the cross-venue
+# locked-arb edge so the matched radar reports an EXECUTABLE number, not a mid-spread
+# that dies on fees + one-sided books.
+from pytheum.economics.fees import (
+    KALSHI_GENERAL_COEFF as _KALSHI_FEE_COEF,
+    pm_fee_rate_for_bet_type,
+    pm_taker_fee,
+)
 
 
 def kalshi_fee(price: float) -> float:
@@ -514,14 +520,20 @@ def kalshi_fee(price: float) -> float:
 
 
 def locked_arb_net_edge(
-    k_book: dict[str, Any] | None, pm_book: dict[str, Any] | None
+    k_book: dict[str, Any] | None,
+    pm_book: dict[str, Any] | None,
+    *,
+    bet_type: str | None = None,
 ) -> float | None:
     """Net-of-fees LOCKED cross-venue edge between a Kalshi and a Polymarket book
     quoting the SAME outcome: buy YES on the cheaper venue + buy NO on the dearer,
-    fee-adjusted. Returns ``1 − min(total cost)`` over both directions (positive =
-    a real executable arb; ≤0 = the mid-spread was a phantom). None when either
-    book lacks both a bid and an ask. Mirrors the divergence scanner's edge so the
-    matched radar and t_find_divergences agree.
+    fee-adjusted on BOTH venues. Returns ``1 − min(total cost)`` over both directions
+    (positive = a real executable arb; ≤0 = the mid-spread was a phantom). None when
+    either book lacks both a bid and an ask. Mirrors the divergence scanner's edge so
+    the matched radar and t_find_divergences agree.
+
+    Both legs now net taker fees: Kalshi (``kalshi_fee``) and Polymarket
+    (``pm_taker_fee``, a category-dependent rate keyed off ``bet_type``; 2026 schedule).
 
     NOTE: assumes direct orientation (YES==YES), correct for binary single-outcome
     pairs (event / house_party). Game-moneyline pairs need the verified side-map;
@@ -536,9 +548,11 @@ def locked_arb_net_edge(
         and isinstance(p_ask, (int, float)) and isinstance(p_bid, (int, float))
     ):
         return None
-    # Direction A: buy YES on Kalshi (ask + fee), buy NO on PM (1 − pm_bid, no fee).
-    cost_a = (k_ask + kalshi_fee(k_ask)) + (1.0 - p_bid)
-    # Direction B: buy YES on PM (ask, no fee), buy NO on Kalshi (1 − bid + fee).
+    pm_rate = pm_fee_rate_for_bet_type(bet_type)
+    # Direction A: buy YES on Kalshi (ask + fee), buy NO on PM (1 − pm_bid + pm fee).
+    pm_no_a = 1.0 - p_bid
+    cost_a = (k_ask + kalshi_fee(k_ask)) + (pm_no_a + pm_taker_fee(pm_no_a, fee_rate=pm_rate))
+    # Direction B: buy YES on PM (ask + pm fee), buy NO on Kalshi (1 − bid + fee).
     no_k = 1.0 - k_bid
-    cost_b = p_ask + (no_k + kalshi_fee(no_k))
+    cost_b = (p_ask + pm_taker_fee(p_ask, fee_rate=pm_rate)) + (no_k + kalshi_fee(no_k))
     return round(1.0 - min(cost_a, cost_b), 4)
