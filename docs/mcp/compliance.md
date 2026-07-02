@@ -5,7 +5,7 @@ Read this before relying on the server in production or listing it publicly.
 ## Read-only & safety posture
 
 - **Every tool is read-only.** No tool places, modifies, or cancels orders;
-  there are no trading credentials anywhere in the server. All 22 tools carry
+  there are no trading credentials anywhere in the server. All 27 tools carry
   `readOnlyHint: true`, `destructiveHint: false`. None requires a confirmation
   prompt.
 - **Annotations are hints, not guarantees.** Per the MCP specification, a client
@@ -47,7 +47,7 @@ Every response discloses its source. Caching windows by tool family:
 | Leaderboard | `live` | ~300 s |
 | Trader profile / holders | `live` | ~60 s |
 | OHLCV / history | `pit_archive` \| `venue_live` \| `mixed` | PIT capture (no lookahead) |
-| Equivalence / matched / rules / related | bundled dataset (`dataset_version`) | dataset snapshot |
+| Equivalence / matched / rules / related | loaded dataset (`dataset_version`) | dataset snapshot |
 
 - **Live quotes are not a consolidated feed.** A quote may be a *parked wall* (a
   resting limit order behind a tight spread). Tools surface `is_parked_wall` and

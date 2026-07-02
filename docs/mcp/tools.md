@@ -1,6 +1,6 @@
 # pytheum MCP — Tool Reference
 
-Complete reference for all 22 tools exposed by the pytheum MCP server. Each entry
+Complete reference for all 27 tools exposed by the pytheum MCP server. Each entry
 gives the tool's purpose, parameters, return shape, MCP annotations, when to use
 it, whether it works offline, and a real example call + response.
 
@@ -21,9 +21,12 @@ it, whether it works offline, and a real example call + response.
   dataset/live-snapshot reads and **false** for time-windowed tape reads (a later
   call returns newer trades). The per-tool **Annotations** line notes any
   exception. No tool is destructive; none requires confirmation.
-- **Mode.** `Offline` = served from bundled datasets via `pytheum serve` (live
-  price fields are `null` offline). `Hosted` = requires `https://api.pytheum.com`
-  (venue fetch, embeddings, or PIT store).
+- **Mode.** `Offline` = served locally by `pytheum serve` from dataset export
+  files you provide via `PYTHEUM_EQUIVALENCE_PATH` / `PYTHEUM_RELATED_PATH` —
+  the package ships no data; without those files the dataset tools return empty
+  results with a `file_missing` flag (live price fields are `null` offline).
+  `Local` = computed in-process, no data or network at all. `Hosted` = requires
+  `https://api.pytheum.com` (venue fetch, embeddings, or PIT store).
 
 > Note: these annotations are documented here and in `server.json`. They are
 > *hints* — per the MCP spec, clients must not treat them as security guarantees.
@@ -32,7 +35,48 @@ it, whether it works offline, and a real example call + response.
 
 ---
 
-## Cross-venue equivalence
+## Meta & onboarding
+
+### `t_guide`
+
+Self-onboarding playbook for an agent landing on pytheum cold — **call this
+first** if you're unsure where to start. Computed locally, no network.
+
+**Use when:** first contact with the server; you want the operating rules, the
+tool inventory grouped by job, and step recipes for common goals.
+
+| Param | Type | Default | Required |
+|---|---|---|---|
+| _(none)_ | | | |
+
+**Mode:** Local · **Annotations:** readOnly, idempotent
+
+**Returns:** `summary` (what pytheum is), `principles` (operating rules — e.g.
+`market_ref` must be venue-prefixed; equivalence is the core; confirm
+settlement + staleness before trading a spread; this server is read-only),
+`conventions` (the `market_ref` format + the `{ok, command, data, meta}`
+envelope contract), `tool_groups` (the full tool inventory grouped by job:
+health / discover / market_detail / cross_venue_equivalence / microstructure /
+flow_and_traders / events_and_batch), `workflows` (ordered step recipes:
+find + validate a cross-venue arb, check if a market exists on the other venue,
+research one market, find today's movers).
+
+### `t_about`
+
+Who Pytheum is, what the data covers, why it exists, and who is building it.
+Computed locally, no network.
+
+**Use when:** an agent or user asks "what is this server / who runs it / what
+does the dataset cover".
+
+| Param | Type | Default | Required |
+|---|---|---|---|
+| _(none)_ | | | |
+
+**Mode:** Local · **Annotations:** readOnly, idempotent
+
+**Returns:** mission, data-coverage summary, team/contact pointers — the same
+payload as `GET /v1/about`.
 
 ### `t_status`
 
@@ -65,6 +109,34 @@ dataset_version), `related` (pairs_loaded), `service` (version + now).
 ```
 
 ---
+
+### `t_quality`
+
+Dataset quality + integrity transparency — the "verify before you pay"
+artifact. Keyless; every number is **derived from the loaded equivalence
+dataset**, none asserted.
+
+**Use when:** you (or a buyer/agent) want to know how much of the pair set is
+structurally guaranteed vs LLM-judged before trusting a pair.
+
+| Param | Type | Default | Required |
+|---|---|---|---|
+| _(none)_ | | | |
+
+**Mode:** Offline · **Annotations:** readOnly, idempotent
+
+**Returns:** `pairs_total` + `dataset_version`; `tiers` (`fungible` =
+deterministic / structural / human-reviewed settlement-verified vs `judged` =
+LLM-adjudicated, each with pairs + pct); `by_method` / `by_bet_type`
+composition + `bet_types_total`; `integrity` (the build-time invariants
+enforced before the dataset ships — 1:1, single-slice-per-id, line-invariant,
+abbrev/name-alignment, same-city); `precision` (per-tier posture;
+`audited_pct` is deliberately `null` — a labeled-sample precision % is
+published separately, not asserted here).
+
+---
+
+## Cross-venue equivalence
 
 ### `t_equivalent_markets`
 
@@ -346,6 +418,56 @@ re-orders onto one cross-venue axis (`volume_usd_norm`).
 ```
 
 ---
+
+### `t_search_markets`
+
+Text search over market **titles** across venues — the cheap, exact complement
+to `t_find_markets`' semantic search. AND-matches the query's title tokens
+(`super bowl winner` must contain all of super/bowl/winner) and ranks by
+volume. Non-semantic: it nails exact terms a paraphrase-based kNN can miss (a
+ticker like `KXBTC`, a player name, `H5N1`) but will **not** find conceptual
+paraphrases — for "markets like this article/headline" use `t_find_markets`.
+Keyless.
+
+**Use when:** you know words that literally appear in the market's title.
+
+| Param | Type | Default | Required |
+|---|---|---|---|
+| `q` | string | — | yes (non-empty) |
+| `venue` | string \| list | all venues | no (`kalshi` \| `polymarket` \| `manifold`; aliases like `poly`, `all`/`both`; unknown venue errors) |
+| `status` | string | `active` | no (`any`/`all` → every status) |
+| `limit` | int 1–200 | 50 | no |
+
+**Mode:** Hosted · **Annotations:** readOnly, idempotent
+
+**Returns:** rows in the same triage shape as `t_screen`
+(implied_yes / book / resolution / resolution_status / condition_id + the
+verified `cross_venue` twin + quote-staleness flags) so you can size an edge
+without a `t_get_market` round-trip. An empty result carries a `meta.hint`
+distinguishing "no such title" from "you wanted a semantic match".
+
+### `t_get_market`
+
+Lean fetch of **one** market's core by ref — the fast "get this market" call
+when an agent lands with a venue id or market URL and doesn't need the full
+`t_market_context` payload (ladder + siblings + news).
+
+**Use when:** resolving a known ref to price/book/status; drill into
+`t_equivalent_markets` when `meta.has_equivalent` is true. Use
+`t_market_context` for rules/ladder/siblings/news; `t_find_markets`/`t_screen`
+to discover by query/filter.
+
+| Param | Type | Default | Required |
+|---|---|---|---|
+| `market_ref` | string | — | yes (venue-prefixed ref, slug, market URL; a raw Kalshi ticker also resolves) |
+
+**Mode:** Hosted · **Annotations:** readOnly, idempotent
+
+**Returns:** `market` {id, venue, question, status, implied_yes, book
+(bid/ask/spread/sizes), volume_usd, condition_id, resolution_status,
+resolution_at, url, found} and `meta` {has_equivalent, matched_via,
+pairs_loaded}. A market not in the store returns `market.found = false` +
+`meta.degraded` rather than an error.
 
 ### `t_market_context`
 

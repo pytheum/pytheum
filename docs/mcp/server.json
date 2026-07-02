@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.pytheum/pytheum",
   "title": "pytheum",
-  "description": "Read-only access to the verified prediction-market graph: settlement-verified Kalshi<->Polymarket equivalence pairs, live orderbooks, point-in-time price history, news/social/macro context, and Polymarket trader analytics. 22 tools, all read-only.",
+  "description": "Read-only access to the verified prediction-market graph: settlement-verified Kalshi<->Polymarket equivalence pairs, live orderbooks, point-in-time price history, news/social/macro context, and Polymarket trader analytics. 27 tools, all read-only.",
   "version": "0.0.1",
   "websiteUrl": "https://api.pytheum.com",
   "repository": {
