@@ -293,8 +293,9 @@ bands, and a `basis` note spelling out exactly how settlement differs.
 ### `t_find_divergences`
 
 Cross-venue divergence scanner: verified same-question pairs joined to live books,
-sorted by **annualized** net-of-fees locked edge (capital efficiency — a small
-near-term lock outranks a bigger one tied up for years).
+sorted **clean-first** (any row with `warnings` sorts after every clean row), then
+by **annualized** net-of-fees locked edge (capital efficiency — a small near-term
+lock outranks a bigger one tied up for years).
 
 **Use when:** you want a ranked, fee-aware view of where the two venues disagree
 on the same question, with settlement rules inlined.
@@ -305,6 +306,7 @@ on the same question, with settlement rules inlined.
 | `limit` | int | 10 | no — ≥1, max pairs returned |
 | `include_rules` | bool | true | no — bundle each pair's settlement text (400-char truncated) |
 | `fungible_only` | bool | false | no — deterministic/structural pairs only |
+| `include_warned` | bool | true | no — keep warned rows (demoted + labeled); `false` filters them out |
 
 **Mode:** Hosted (needs live book join; offline returns pairs with no edge) ·
 **Annotations:** readOnly, **not idempotent** (live books move between calls)
@@ -312,10 +314,23 @@ on the same question, with settlement rules inlined.
 **Returns:** `divergences[]` — each with `net_edge`, `annualized_net_edge`,
 `lock_days`, `matched_by`, `match_confidence`, `bet_type`, `title_similarity`,
 `either_leg_parked` (true = a frozen parked-wall quote → the edge is a ghost),
-both legs (`a`=Kalshi, `b`=Polymarket) with `is_parked_wall`/`last_move_age_s`,
-and `resolution.{kalshi,polymarket}` when `include_rules`. Plus `pairs_scanned`,
-`orientation_excluded`, `parked_excluded`, `suspect_excluded`, `ranked_by`,
-`note`.
+`warnings[]` (first-class honesty labels: `resolution_mismatch` — the legs'
+resolution dates disagree >1d; `either_leg_parked`; `stale_quote` — a leg's price
+frozen >3600s; `near_resolution` — a leg <1 day from resolution;
+`depth_unverified` — fillable size unknown), `max_lockable_notional` (depth-capped
+fillable USD at the quoted top-of-book: min over legs of executable-side size ×
+price on the edge's direction; **null** when either leg's book carries no size —
+unverified, never guessed) + `notional_basis` (documents the computation), both
+legs (`a`=Kalshi, `b`=Polymarket) with `is_parked_wall`/`last_move_age_s`, and
+`resolution.{kalshi,polymarket}` when `include_rules`. Plus `pairs_scanned`,
+`orientation_excluded`, `parked_excluded`, `suspect_excluded`, `extreme_excluded`,
+`warned_filtered` (rows dropped when `include_warned=false`), `ranked_by`, `note`.
+
+**Ordering semantics:** rows with ANY warning sort AFTER all clean rows; within
+each group the annualized-edge (fallback raw-edge) order is kept. **A large edge
+with warnings is usually quote noise** — a stale, parked, or hours-from-resolution
+leg, not free money (a live probe saw a flagged #1 "edge" collapse 23.1c → −4c on
+requote). See `warnings` before acting.
 
 ```jsonc
 // t_find_divergences(min_net_edge=0.02, limit=1)
@@ -324,14 +339,20 @@ and `resolution.{kalshi,polymarket}` when `include_rules`. Plus `pairs_scanned`,
     { "net_edge": 0.031, "annualized_net_edge": 0.42, "lock_days": 28,
       "matched_by": "human_adjudicated", "match_confidence": 1.0, "bet_type": "event",
       "title_similarity": 0.91, "either_leg_parked": false,
+      "warnings": [],
+      "max_lockable_notional": 812.5,
+      "notional_basis": "min over legs of top-of-book size x executable price at the quoted books (buy-YES leg: ask_size x ask; buy-NO leg: bid_size x (1-bid)), taken on the cheaper (edge) direction; top-of-book level only (no deeper levels fetched); fees not netted",
       "a": { "market_id": "kalshi:KXFED-25-JUL", "venue": "kalshi", "implied_yes": 0.66,
-             "book": { "bid": 0.65, "ask": 0.67 }, "is_parked_wall": false, "last_move_age_s": 120 },
+             "book": { "bid": 0.65, "ask": 0.67, "bid_size": 1500, "ask_size": 1250 },
+             "is_parked_wall": false, "last_move_age_s": 120 },
       "b": { "market_id": "polymarket:558936", "venue": "polymarket", "implied_yes": 0.62,
-             "book": { "bid": 0.61, "ask": 0.63 }, "is_parked_wall": false, "last_move_age_s": 45 },
+             "book": { "bid": 0.61, "ask": 0.63, "bid_size": 2083, "ask_size": 900 },
+             "is_parked_wall": false, "last_move_age_s": 45 },
       "resolution": { "kalshi": "Resolves YES if the FOMC…", "polymarket": "Resolves Yes if the Fed…" } }
   ],
   "pairs_scanned": 150, "orientation_excluded": 12, "parked_excluded": 3, "suspect_excluded": 1,
-  "ranked_by": "annualized_net_edge (capital-efficiency; falls back to net_edge when horizon unknown)"
+  "warned_filtered": 0,
+  "ranked_by": "clean-first (rows with any `warnings` sort after clean rows), then annualized_net_edge (capital-efficiency; falls back to net_edge when horizon unknown)"
 }
 ```
 

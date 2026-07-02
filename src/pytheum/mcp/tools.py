@@ -1385,10 +1385,88 @@ def _is_price_extreme(p: float | None) -> bool:
     return p is not None and (p >= _EXTREME_PRICE or p <= 1.0 - _EXTREME_PRICE)
 
 
+# Divergence-row honesty warnings (#2026-06-29 self-probe): pairs with
+# resolution_mismatch were still ranked by edge with the flag buried; top hits were
+# 0.14-day-to-resolution markets with 24-40pt "edges" on stale/parked legs (the #1
+# flagged edge collapsed 23.1c -> -4c on requote). Each warning below is derived from
+# fields the row ALREADY carries (no re-fetch); any warned row is demoted below every
+# clean row by the default sort, and `include_warned=false` filters them out entirely.
+_STALE_QUOTE_AGE_S = 3600.0   # leg last-move age beyond which the quote is warned stale
+_NEAR_RESOLUTION_DAYS = 1.0   # leg horizon under which endgame quote noise dominates
+
+
+def _row_warnings(*, resolution_mismatch: bool, either_leg_parked: bool,
+                  legs: tuple[dict[str, Any], ...],
+                  depth_unverified: bool) -> list[str]:
+    """First-class honesty labels for one divergence row.
+
+    - resolution_mismatch: legs' resolution dates disagree >1d (PM placeholder).
+    - either_leg_parked:   a leg's quote is a frozen parked wall, not a live price.
+    - stale_quote:         a leg's price hasn't moved in > _STALE_QUOTE_AGE_S
+                           (where last_move_age_s exists).
+    - near_resolution:     a leg resolves in < _NEAR_RESOLUTION_DAYS — endgame
+                           quotes are noise, not lockable edge.
+    - depth_unverified:    no usable top-of-book size on >=1 leg, so the edge's
+                           fillable size is unknown (max_lockable_notional null).
+    """
+    w: list[str] = []
+    if resolution_mismatch:
+        w.append("resolution_mismatch")
+    if either_leg_parked:
+        w.append("either_leg_parked")
+    if any(isinstance(leg.get("last_move_age_s"), (int, float))
+           and leg["last_move_age_s"] > _STALE_QUOTE_AGE_S for leg in legs):
+        w.append("stale_quote")
+    if any(isinstance(leg.get("days_to_resolution"), (int, float))
+           and leg["days_to_resolution"] < _NEAR_RESOLUTION_DAYS for leg in legs):
+        w.append("near_resolution")
+    if depth_unverified:
+        w.append("depth_unverified")
+    return w
+
+
+_NOTIONAL_BASIS_DEPTH = (
+    "min over legs of top-of-book size x executable price at the quoted books "
+    "(buy-YES leg: ask_size x ask; buy-NO leg: bid_size x (1-bid)), taken on the "
+    "cheaper (edge) direction; top-of-book level only (no deeper levels fetched); "
+    "fees not netted")
+_NOTIONAL_BASIS_UNVERIFIED = (
+    "unknown: top-of-book size missing on >=1 leg (venue snapshot carries no depth) "
+    "— fillable size unverified, treat the edge as unsized")
+
+
+def _lockable_notional(a_book: Any, b_book: Any) -> tuple[float | None, str]:
+    """Depth-capped fillable notional (USD) at the quoted prices for the SAME
+    direction `_divergence_edge` scores (buy YES on the cheaper venue + buy NO on
+    the dearer — direction chosen by min net cost, exactly like the edge). Walks
+    only the top-of-book level the route already fetched — NO new venue calls.
+    Returns (notional, basis); (None, unverified-basis) when either leg lacks a
+    usable size at its executable side, rather than guessing."""
+    if not isinstance(a_book, dict) or not isinstance(b_book, dict):
+        return None, _NOTIONAL_BASIS_UNVERIFIED
+    directions: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
+    for yes_leg, no_leg in ((a_book, b_book), (b_book, a_book)):
+        ya, na = yes_leg.get("yes_ask_net"), no_leg.get("no_ask_net")
+        if isinstance(ya, (int, float)) and isinstance(na, (int, float)):
+            directions.append((ya + na, yes_leg, no_leg))
+    if not directions:
+        return None, _NOTIONAL_BASIS_UNVERIFIED
+    # min() keeps the FIRST minimum on a tie — same pick as _divergence_edge's min(costs).
+    _, yes_leg, no_leg = min(directions, key=lambda d: d[0])
+    ask, ask_size = yes_leg.get("ask"), yes_leg.get("ask_size")
+    bid, bid_size = no_leg.get("bid"), no_leg.get("bid_size")
+    if not all(isinstance(v, (int, float)) for v in (ask, ask_size, bid, bid_size)):
+        return None, _NOTIONAL_BASIS_UNVERIFIED
+    yes_notional = float(ask_size) * float(ask)          # buying YES at the ask
+    no_notional = float(bid_size) * (1.0 - float(bid))   # buying NO = hitting the YES bid
+    return round(min(yes_notional, no_notional), 2), _NOTIONAL_BASIS_DEPTH
+
+
 async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float = 0.0,
                            limit: int = 10, seed_limit: int = 12,
                            include_rules: bool = True,
-                           fungible_only: bool = False) -> dict[str, Any]:
+                           fungible_only: bool = False,
+                           include_warned: bool = True) -> dict[str, Any]:
     """v2 cross-venue net-of-fees divergence scanner (#251/#247). Pairs come
     from the VERIFIED equivalence set — the matcher's pre-decided gold pairs
     (132,946 shipped 2026-06-11; we serve them, we don't match) joined to live
@@ -1404,6 +1482,13 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
     to 400 chars — pull once here instead of N t_market_rules calls.
     ``fungible_only`` (default False): restrict to deterministic/structural
     pairs (no LLM-judged pairs).
+    ``include_warned`` (default True): rows with honesty ``warnings``
+    (resolution_mismatch / either_leg_parked / stale_quote / near_resolution /
+    depth_unverified) are still RETURNED but sort AFTER every clean row (within
+    each group the edge ordering is kept); ``False`` filters them out entirely.
+    Each row also carries ``max_lockable_notional`` (depth-capped fillable USD at
+    the quoted top-of-book; null + a depth_unverified warning when either leg's
+    size is unknown) and ``notional_basis`` (how that number was computed).
     """
     _ = seed_limit  # v1 compat — pair recall now comes from the equivalence set
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
@@ -1502,6 +1587,17 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
             and kd > 0 and pd_ > 0 and abs(kd - pd_) > 1.0)
         lock_days = (kd if (resolution_mismatch and isinstance(kd, (int, float)) and kd > 0)
                      else _lock_days(kd, pd_))
+        # Fillable-size signal: without it a 2-contract "edge" reads the same as a
+        # real one. Depth-capped at the top-of-book the route already fetched; null
+        # (+ depth_unverified warning) when either leg carries no size — never guessed.
+        notional, notional_basis = _lockable_notional(a.get("book"), b.get("book"))
+        either_leg_parked = bool(a.get("is_parked_wall") or b.get("is_parked_wall"))
+        warnings = _row_warnings(
+            resolution_mismatch=resolution_mismatch,
+            either_leg_parked=either_leg_parked,
+            legs=(a, b),
+            depth_unverified=notional is None,
+        )
         row: dict[str, Any] = {
             "net_edge": edge,
             # capital efficiency: annualize over the binding (later) leg so a
@@ -1525,7 +1621,16 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
             # a ghost — the recurring false edge the probes flagged (Bernie
             # 2028 longshot pair). last_move_age_s/is_parked_wall ride each leg
             # so the agent can filter without a per-leg t_market_history call.
-            "either_leg_parked": bool(a.get("is_parked_wall") or b.get("is_parked_wall")),
+            "either_leg_parked": either_leg_parked,
+            # First-class honesty labels (see _row_warnings). ANY warning demotes
+            # the row below every clean row in the default sort — a large edge
+            # with warnings is usually quote noise, not free money.
+            "warnings": warnings,
+            # Depth-capped fillable USD at the quoted top-of-book (min over legs
+            # of executable-side size x price, on the edge's direction); null =
+            # size unknown on a leg (depth_unverified warning rides along).
+            "max_lockable_notional": notional,
+            "notional_basis": notional_basis,
             "a": _div_leg(a),
             "b": _div_leg(b),
         }
@@ -1543,10 +1648,21 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
                 "polymarket": _trunc_rules(b.get("resolution")),
             }
         out.append(row)
-    # Rank by annualized edge (capital efficiency) when known, else raw net_edge;
-    # a pair with no horizon falls back to its raw edge so it isn't lost.
-    out.sort(key=lambda d: (d.get("annualized_net_edge") if d.get("annualized_net_edge")
-                            is not None else d["net_edge"]), reverse=True)
+    warned_filtered = 0
+    if not include_warned:
+        n_before = len(out)
+        out = [d for d in out if not d["warnings"]]
+        warned_filtered = n_before - len(out)
+
+    # Rank clean rows FIRST (any warning demotes — the 2026-06-29 probe's top hits
+    # were warned rows whose "edges" were quote noise), then within each group by
+    # annualized edge (capital efficiency) when known, else raw net_edge.
+    def _rank_key(d: dict[str, Any]) -> tuple[int, float]:
+        eff = d.get("annualized_net_edge")
+        eff = eff if eff is not None else d["net_edge"]
+        return (1 if d.get("warnings") else 0, -eff)
+
+    out.sort(key=_rank_key)
     return {
         "divergences": out[:limit],
         "pairs_scanned": len(pairs),
@@ -1554,7 +1670,10 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
         "parked_excluded": parked_excluded,
         "suspect_excluded": suspect_excluded,
         "extreme_excluded": extreme_excluded,
-        "ranked_by": "annualized_net_edge (capital-efficiency; falls back to net_edge when horizon unknown)",
+        "warned_filtered": warned_filtered,
+        "ranked_by": ("clean-first (rows with any `warnings` sort after clean rows), then "
+                      "annualized_net_edge (capital-efficiency; falls back to net_edge when "
+                      "horizon unknown)"),
         "note": ("Pairs are pre-decided by the cross-venue matcher (gold set) and "
                  "joined to live books server-side; `matched_by` is the per-pair "
                  "provenance (deterministic structural methods carry null "
@@ -1564,7 +1683,11 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
                  "side both quotes refer to after re-orientation). Excluded with "
                  "counts: unmapped orientations, frozen parked-wall pairs, and "
                  "suspect >15pt 'edges' on game pairs (venue time-skew, not free "
-                 "money) — all still served raw via /v1/markets/equivalents. On "
-                 "fast-moving live games, compare each leg's last_move_age_s "
-                 "before trusting a gap. Manifold excluded (play money)."),
+                 "money) — all still served raw via /v1/markets/equivalents. "
+                 "A large edge with `warnings` is usually quote noise (stale / "
+                 "parked / near-resolution legs), not free money — read `warnings` "
+                 "and `max_lockable_notional` before acting; null notional means "
+                 "the fillable size is unverified. On fast-moving live games, "
+                 "compare each leg's last_move_age_s before trusting a gap. "
+                 "Manifold excluded (play money)."),
     }
