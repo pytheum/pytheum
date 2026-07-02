@@ -4,7 +4,7 @@ The pytheum Model Context Protocol (MCP) server gives an AI agent direct,
 read-only access to the **verified prediction-market graph**: settlement-verified
 Kalshi↔Polymarket equivalence pairs, live orderbook quotes, point-in-time price
 history, news/social/macro context, and Polymarket trader analytics — all behind
-22 tools an agent can call without scraping two venues by hand.
+27 tools an agent can call without scraping two venues by hand.
 
 - **Read-only.** No tool places, modifies, or cancels an order. There are no
   trading keys anywhere in the server. Every tool carries `readOnlyHint: true`.
@@ -12,8 +12,10 @@ history, news/social/macro context, and Polymarket trader analytics — all behi
   every response names its `source` (`live` / `pit_archive` / `venue_live` /
   `unavailable`). Cross-venue pairs carry a per-pair `method` + `confidence` so a
   match is always auditable.
-- **Two connection modes.** A hosted always-on connector (zero install) and a
-  fully offline local server over the bundled datasets (no keys, no network).
+- **Two connection modes.** A hosted always-on connector (zero install — serves
+  the full current graph) and a local self-hosted server that runs offline
+  against dataset export files **you provide** (no keys, no network; the package
+  itself ships no data).
 
 | Doc | Contents |
 |---|---|
@@ -27,14 +29,19 @@ history, news/social/macro context, and Polymarket trader analytics — all behi
 
 | Group | Tools | Mode |
 |---|---|---|
-| **Cross-venue equivalence** | `t_status`, `t_equivalent_markets`, `t_matched_pairs`, `t_market_rules`, `t_related_markets`, `t_find_divergences` | Offline-capable* |
-| **Discovery & context** | `t_find_markets`, `t_screen`, `t_market_context`, `t_bundle_context`, `t_context_batch`, `t_event_related_markets` | Hosted |
+| **Meta & onboarding** | `t_guide`, `t_about`, `t_status`, `t_quality` | Local / offline-capable* |
+| **Cross-venue equivalence** | `t_equivalent_markets`, `t_matched_pairs`, `t_market_rules`, `t_related_markets`, `t_find_divergences` | Offline-capable* |
+| **Discovery & context** | `t_find_markets`, `t_search_markets`, `t_screen`, `t_get_market`, `t_market_context`, `t_bundle_context`, `t_context_batch`, `t_event_related_markets` | Hosted |
 | **Live market data** | `t_orderbook`, `t_recent_trades`, `t_open_interest`, `t_ohlcv`, `t_market_history`, `t_market_flow` | Hosted |
 | **Trader analytics (Polymarket-only)** | `t_leaderboard`, `t_trader_profile`, `t_market_holders`, `t_whale_trades` | Hosted |
 
-\* The bundled cross-venue datasets (equivalence pairs, matched pairs, rules,
-related) serve fully offline via `pytheum serve`. Live prices and edges that
-those tools normally splice in are absent offline (fields are present but `null`);
+\* Offline means `pytheum serve` with `PYTHEUM_EQUIVALENCE_PATH` /
+`PYTHEUM_RELATED_PATH` pointing at dataset export files — the exports are **not
+bundled** in the wheel or this repo (only their checksums are pinned in
+`datasets/MANIFEST.json`); without them the dataset tools return empty results
+(with a `file_missing` flag), never errors. `t_guide` / `t_about` are fully
+local (no data, no network). Live prices and edges that offline-capable tools
+normally splice in are absent offline (fields present but `null`);
 `t_find_divergences` returns its verified pairs but cannot compute a live locked
 edge without a hosted book join. See each tool's **Mode** line in
 [tools.md](tools.md).
@@ -92,13 +99,20 @@ claude mcp add --transport http pytheum https://api.pytheum.com/mcp
 
 ---
 
-## Connection mode 2 — Local offline server
+## Connection mode 2 — Local self-hosted server
 
-Run the whole thing yourself over the bundled datasets. No secrets, no network
-for the offline routes.
+Run the server yourself. No secrets, no network for the offline routes — but
+note the package **ships no data**: the dataset tools serve real pairs only if
+you point them at equivalence/related export files (the hosted endpoint above
+serves the full current graph with zero setup).
 
 ```bash
 pip install pytheum
+
+# Optional — self-host with data (otherwise dataset tools return empty results):
+export PYTHEUM_EQUIVALENCE_PATH=/path/to/equivalence-export.jsonl.gz
+export PYTHEUM_RELATED_PATH=/path/to/related-export.jsonl.gz
+
 pytheum serve --mcp        # HTTP API on :8080, MCP on :8444
 ```
 
@@ -115,9 +129,10 @@ local URL:
 }
 ```
 
-Offline, the cross-venue tools (`t_status`, `t_equivalent_markets`,
-`t_matched_pairs`, `t_market_rules`, `t_related_markets`) serve from the bundled
-data. The discovery, live-data, and trader tools require the hosted API (they hit
+Offline, the cross-venue tools (`t_status`, `t_quality`, `t_equivalent_markets`,
+`t_matched_pairs`, `t_market_rules`, `t_related_markets`) serve from your local
+dataset files (empty results with a `file_missing` flag if none are configured).
+The discovery, live-data, and trader tools require the hosted API (they hit
 venue endpoints and the embeddings/PIT store), and degrade to a
 `source: "unavailable"` / empty result rather than erroring when run offline.
 

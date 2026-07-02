@@ -1,7 +1,7 @@
 # pytheum
 
 **The verified prediction-market graph — ~140k+ settlement-verified
-Kalshi×Polymarket pairs; 1.6M verified connections across 364k markets.**
+Kalshi×Polymarket pairs, rebuilt daily, plus a correlated-pairs tier.**
 
 Every pair is verified by **settlement semantics** — the two markets resolve to
 the same real-world outcome — not by fuzzy title similarity. The matching is
@@ -222,7 +222,10 @@ app = RouterApp(registry.build_router())
 
 - **Code: MIT** (see [`LICENSE`](LICENSE)).
 - **Data (`datasets/`): CC-BY-4.0** — the settlement-verified cross-venue pair
-  artifacts. Formal attribution text is pinned at the v0.1.0 data release.
+  artifacts. The artifacts themselves are checksum-pinned in
+  `datasets/MANIFEST.json` but distributed separately (they are not committed to
+  this repo or bundled in the wheel); formal attribution text will be pinned at
+  the first data release.
 
 See [`datasets/README.md`](datasets/README.md) for the artifact schema and
 checksums.
