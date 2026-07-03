@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from dataclasses import fields as _dc_fields
 from datetime import datetime
-from typing import Any, Self
+from typing import Any, Self, TypeVar
 
 __all__ = [
     "Status",
@@ -65,6 +65,9 @@ __all__ = [
 # shared helpers
 # --------------------------------------------------------------------------
 
+_T = TypeVar("_T")
+
+
 def _parse_ts(value: Any) -> datetime | None:
     """Parse an ISO-8601 timestamp. Returns None on any failure — never raises."""
     if not isinstance(value, str) or not value:
@@ -78,7 +81,7 @@ def _parse_ts(value: Any) -> datetime | None:
         return None
 
 
-def _autofill(cls: type, d: dict[str, Any] | None, **overrides: Any) -> Any:
+def _autofill(cls: type[_T], d: dict[str, Any] | None, **overrides: Any) -> _T:
     """Build ``cls`` from ``d`` by matching dataclass field names 1:1 to dict
     keys, then applying ``overrides`` for fields that need custom parsing or
     nested construction. Missing keys become None; unknown keys are dropped
@@ -87,7 +90,7 @@ def _autofill(cls: type, d: dict[str, Any] | None, **overrides: Any) -> Any:
     """
     d = d if isinstance(d, dict) else {}
     kwargs: dict[str, Any] = {}
-    for f in _dc_fields(cls):
+    for f in _dc_fields(cls):  # type: ignore[arg-type]  # _T is always a dataclass here
         if f.name == "raw" or f.name in overrides:
             continue
         kwargs[f.name] = d.get(f.name)
@@ -107,10 +110,10 @@ class PlatformStat:
     markets: int | None = None
     last_updated: datetime | None = None
     status: str | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         return _autofill(cls, d, last_updated=_parse_ts((d or {}).get("last_updated")))
 
 
@@ -126,10 +129,10 @@ class Status:
     service_version: str | None = None
     now: datetime | None = None
     platforms: dict[str, PlatformStat] = field(default_factory=dict)
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         equivalence = d.get("equivalence") or {}
         related = d.get("related") or {}
@@ -174,10 +177,10 @@ class BookTop:
     ask_size: float | None = None
     mid: float | None = None
     mid_reliable: bool | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         return _autofill(cls, d)
 
 
@@ -196,10 +199,10 @@ class MarketLeg:
     book: BookTop | None = None
     volume_usd: float | None = None
     url: str | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         book = d.get("book")
         return _autofill(cls, d, book=BookTop.from_dict(book) if isinstance(book, dict) else None)
@@ -221,10 +224,10 @@ class CrossVenue:
     net_edge: float | None = None
     spread: float | None = None
     executable: bool | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         return _autofill(cls, d)
 
 
@@ -239,10 +242,10 @@ class MatchedPair:
     method: str | None = None
     cross_venue: CrossVenue | None = None
     is_live: bool | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         return cls(
             kalshi=MarketLeg.from_dict(d.get("kalshi") or {}),
@@ -262,11 +265,11 @@ class MatchedPage:
 
     pairs: list[MatchedPair] = field(default_factory=list)
     total: int | None = None
-    meta: dict | None = None
-    raw: dict = field(default_factory=dict)
+    meta: dict[str, Any] | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         return cls(
             pairs=[MatchedPair.from_dict(p) for p in d.get("pairs") or []],
@@ -312,12 +315,12 @@ class Market:
     condition_id: str | None = None
     event_key: str | None = None
     is_stale: bool | None = None
-    bundle_top_outcome: dict | None = None
-    bundle_outcomes: list | None = None
-    raw: dict = field(default_factory=dict)
+    bundle_top_outcome: dict[str, Any] | None = None
+    bundle_outcomes: list[Any] | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         book = d.get("book")
         return _autofill(
@@ -336,11 +339,11 @@ class SearchPage:
 
     markets: list[Market] = field(default_factory=list)
     count: int | None = None
-    meta: dict | None = None
-    raw: dict = field(default_factory=dict)
+    meta: dict[str, Any] | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         return cls(
             markets=[Market.from_dict(m) for m in d.get("markets") or []],
@@ -359,11 +362,11 @@ class ScreenPage:
 
     markets: list[Market] = field(default_factory=list)
     count: int | None = None
-    meta: dict | None = None
-    raw: dict = field(default_factory=dict)
+    meta: dict[str, Any] | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         return cls(
             markets=[Market.from_dict(m) for m in d.get("markets") or []],
@@ -392,10 +395,10 @@ class Equivalent:
     book: BookTop | None = None
     volume_usd: float | None = None
     url: str | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         book = d.get("book")
         return _autofill(cls, d, book=BookTop.from_dict(book) if isinstance(book, dict) else None)
@@ -408,11 +411,11 @@ class EquivalentsResult:
     market: Market | None = None
     equivalents: list[Equivalent] = field(default_factory=list)
     cross_venue: CrossVenue | None = None
-    meta: dict | None = None
-    raw: dict = field(default_factory=dict)
+    meta: dict[str, Any] | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         cross_venue = d.get("cross_venue")
         return cls(
@@ -457,10 +460,10 @@ class RelatedMarket:
     url: str | None = None
     condition_id: str | None = None
     status: str | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         book = d.get("book")
         return _autofill(cls, d, book=BookTop.from_dict(book) if isinstance(book, dict) else None)
@@ -472,11 +475,11 @@ class RelatedResult:
 
     market: Market | None = None
     related: list[RelatedMarket] = field(default_factory=list)
-    meta: dict | None = None
-    raw: dict = field(default_factory=dict)
+    meta: dict[str, Any] | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         return cls(
             market=Market.from_dict(d.get("market") or {}),
@@ -502,7 +505,7 @@ class BookLevel:
 
     price: float | None = None
     size: float | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: Any) -> Self:
@@ -528,10 +531,10 @@ class Orderbook:
     ts: datetime | None = None
     source: str | None = None
     top: BookTop | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         top = d.get("top")
         return cls(
@@ -558,10 +561,10 @@ class Trade:
     price: float | None = None
     size: float | None = None
     side: str | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         return _autofill(cls, d, ts=_parse_ts((d or {}).get("ts")))
 
 
@@ -576,10 +579,10 @@ class TradesPage:
     source: str | None = None
     newest_trade_age_s: float | None = None
     is_stale: bool | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         return cls(
             trades=[Trade.from_dict(t) for t in d.get("trades") or []],
@@ -607,10 +610,10 @@ class OHLCVBar:
     l: float | None = None  # noqa: E741 — matches the API's own field name
     c: float | None = None
     v: float | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         return _autofill(cls, d, t=_parse_ts((d or {}).get("t")))
 
 
@@ -621,11 +624,11 @@ class OHLCVSeries:
     market: Market | None = None
     interval: str | None = None
     candles: list[OHLCVBar] = field(default_factory=list)
-    meta: dict | None = None
-    raw: dict = field(default_factory=dict)
+    meta: dict[str, Any] | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         market = d.get("market")
         return cls(
@@ -653,10 +656,10 @@ class LeaderboardEntry:
     volume: float | None = None
     positions_value: float | None = None
     rank: str | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         return _autofill(cls, d)
 
 
@@ -666,10 +669,10 @@ class LeaderboardResult:
 
     period: str | None = None
     traders: list[LeaderboardEntry] = field(default_factory=list)
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         return cls(
             period=d.get("period"),
@@ -688,10 +691,10 @@ class TraderPosition:
     avg_price: float | None = None
     current_value: float | None = None
     profit: float | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         return _autofill(cls, d)
 
 
@@ -701,10 +704,10 @@ class Trader:
 
     wallet: str | None = None
     positions: list[TraderPosition] = field(default_factory=list)
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         return cls(
             wallet=d.get("wallet"),
@@ -726,10 +729,10 @@ class Holder:
     address: str | None = None
     amount: float | None = None
     outcome: str | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         return _autofill(cls, d)
 
 
@@ -739,10 +742,10 @@ class HoldersPage:
 
     holders: list[Holder] = field(default_factory=list)
     count: int | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         return cls(
             holders=[Holder.from_dict(h) for h in d.get("holders") or []],
@@ -770,10 +773,10 @@ class WhaleTrade:
     side: str | None = None
     wallet: str | None = None
     pseudonym: str | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         return _autofill(cls, d, ts=_parse_ts((d or {}).get("ts")))
 
 
@@ -787,10 +790,10 @@ class WhaleTradesPage:
     venue: str | None = None
     source: str | None = None
     note: str | None = None
-    raw: dict = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, d: dict) -> Self:
+    def from_dict(cls, d: dict[str, Any]) -> Self:
         d = d if isinstance(d, dict) else {}
         return cls(
             trades=[WhaleTrade.from_dict(t) for t in d.get("trades") or []],
