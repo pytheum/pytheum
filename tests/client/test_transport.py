@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import email.utils
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -362,7 +362,7 @@ def test_parse_retry_after_negative_delta_clamped_to_zero() -> None:
 
 
 def test_parse_retry_after_http_date() -> None:
-    future = datetime.now(timezone.utc) + timedelta(seconds=10)
+    future = datetime.now(UTC) + timedelta(seconds=10)
     header_val = email.utils.format_datetime(future, usegmt=True)
     result = parse_retry_after(header_val)
     assert result is not None
@@ -371,7 +371,7 @@ def test_parse_retry_after_http_date() -> None:
 
 
 def test_parse_retry_after_past_http_date_clamped_to_zero() -> None:
-    past = datetime.now(timezone.utc) - timedelta(seconds=30)
+    past = datetime.now(UTC) - timedelta(seconds=30)
     header_val = email.utils.format_datetime(past, usegmt=True)
     assert parse_retry_after(header_val) == 0.0
 

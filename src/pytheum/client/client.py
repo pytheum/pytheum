@@ -171,7 +171,7 @@ class AsyncClient(_ClientBase):
         return await self._call("bundle_context", ref=ref, limit=limit)
 
     async def context_batch(self, refs: list[str]) -> Any:
-        return await self._call("context_batch", refs=",".join(refs))
+        return await self._call("context_batch", ids=",".join(refs))
 
     async def event_related_markets(self, event_id: str, *, limit: int | None = None) -> Any:
         return await self._call("event_related_markets", event_id=event_id, limit=limit)
@@ -275,7 +275,7 @@ class Client(_ClientBase):
         return self._call("bundle_context", ref=ref, limit=limit)
 
     def context_batch(self, refs: list[str]) -> Any:
-        return self._call("context_batch", refs=",".join(refs))
+        return self._call("context_batch", ids=",".join(refs))
 
     def event_related_markets(self, event_id: str, *, limit: int | None = None) -> Any:
         return self._call("event_related_markets", event_id=event_id, limit=limit)

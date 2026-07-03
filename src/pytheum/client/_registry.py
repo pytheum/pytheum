@@ -40,7 +40,7 @@ REGISTRY: tuple[Endpoint, ...] = (
     Endpoint("rules", "GET", "/v1/markets/{ref}/rules"),
     Endpoint("context", "GET", "/v1/markets/{ref}/context", ("limit",), pit=True),
     Endpoint("bundle_context", "GET", "/v1/bundles/{ref}/context", ("limit",), pit=True),
-    Endpoint("context_batch", "GET", "/v1/markets/context-batch", ("refs",), pit=True),
+    Endpoint("context_batch", "GET", "/v1/markets/context-batch", ("ids",), pit=True),
     Endpoint("event_related_markets", "GET", "/v1/events/{event_id}/related-markets",
              ("limit",), pit=True),
     Endpoint("orderbook", "GET", "/v1/markets/{ref}/book"),

@@ -35,6 +35,10 @@ _WORKLOAD = [
 ]
 
 
+def _pct(sorted_xs: list[float], q: float) -> float:
+    return sorted_xs[min(int(len(sorted_xs) * q), len(sorted_xs) - 1)]
+
+
 async def _run(secs: float, concurrency: int) -> int:
     px = AsyncClient(max_concurrency=concurrency)
     lat: dict[str, list[float]] = {name: [] for name, _ in _WORKLOAD}
@@ -80,8 +84,8 @@ async def _run(secs: float, concurrency: int) -> int:
             print(f"{name:14}{0:>6}      —")
             continue
         xs.sort()
-        p = lambda q: xs[min(int(len(xs) * q), len(xs) - 1)]
-        print(f"{name:14}{len(xs):>6}{p(.50):>9.0f}{p(.95):>9.0f}{p(.99):>9.0f}{p(.999):>9.0f}")
+        print(f"{name:14}{len(xs):>6}{_pct(xs, .50):>9.0f}{_pct(xs, .95):>9.0f}"
+              f"{_pct(xs, .99):>9.0f}{_pct(xs, .999):>9.0f}")
     print("=" * 64)
     # health verdict: the governor + retry should keep surfaced errors negligible
     err_rate = errors / max(total + errors, 1)
