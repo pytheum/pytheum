@@ -115,8 +115,22 @@ class RouterApp:
     (Starlette/FastAPI) would only add a second routing layer.
     """
 
-    def __init__(self, router: Router) -> None:
+    def __init__(
+        self,
+        router: Router,
+        *,
+        llms_txt: str | None = None,
+        text_routes: dict[str, Callable[[], str]] | None = None,
+    ) -> None:
         self._router = router
+        # Wrapper processes (pytheum-pit) extend the agent manifest with
+        # sections for routes only they serve (e.g. the cross_venue_arb WS
+        # event) — without an override the manifest they serve on :8445 would
+        # silently omit them (the 2026-07-03 launch-night artifact).
+        self._llms_txt = llms_txt if llms_txt is not None else LLMS_TXT
+        # Plain-text GET endpoints (e.g. Prometheus /v1/stream/metrics) that
+        # can't go through the JSON router. Callable is invoked per request.
+        self._text_routes = dict(text_routes or {})
 
     async def __call__(
         self, scope: dict[str, Any], receive: Any, send: Any
@@ -131,14 +145,16 @@ class RouterApp:
             await self._respond(send, 200, {"ok": True})
             return
         if path.rstrip("/") in ("/llms.txt",):
-            await send(
-                {
-                    "type": "http.response.start",
-                    "status": 200,
-                    "headers": [(b"content-type", b"text/plain; charset=utf-8")],
-                }
-            )
-            await send({"type": "http.response.body", "body": LLMS_TXT.encode()})
+            await self._respond_text(send, self._llms_txt)
+            return
+        text_handler = self._text_routes.get(path.rstrip("/") or path)
+        if text_handler is not None:
+            try:
+                body = text_handler()
+            except Exception:
+                await self._respond(send, 500, {"error": "text_route_failed"})
+                return
+            await self._respond_text(send, body)
             return
         raw_qs = parse_qs(
             scope.get("query_string", b"").decode("utf-8", "replace")
@@ -181,6 +197,17 @@ class RouterApp:
             return
         status, body = result
         await self._respond(send, status, body)
+
+    @staticmethod
+    async def _respond_text(send: Any, body: str, status: int = 200) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+            }
+        )
+        await send({"type": "http.response.body", "body": body.encode()})
 
     @staticmethod
     async def _respond(send: Any, status: int, body: Any) -> None:
