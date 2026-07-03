@@ -70,7 +70,7 @@ def _parse_offset(query: dict[str, str]) -> int:
         return 0
 
 
-_VALID_SORT_BY = frozenset({"volume", "spread", "confidence"})
+_VALID_SORT_BY = frozenset({"volume", "spread", "confidence", "net_edge"})
 
 
 def _parse_sort_by(query: dict[str, str]) -> str:
@@ -238,6 +238,14 @@ def _build_sort_key(sort_by: str) -> Any:
     return _volume_key
 
 
+# In-flight concurrency cap: /v1/markets/matched is latency-bound (full-index scan +
+# hydration) and NEVER trips the per-IP req/s limiter — 40 concurrent callers just see
+# 10s+ p99s (2026-07-03 stress ramp). Shed load instead: beyond N in-flight requests,
+# fast-fail 429 with Retry-After so clients back off cleanly like every other endpoint.
+_MATCHED_MAX_INFLIGHT = 8
+_matched_inflight = 0
+
+
 async def handle_markets_matched(
     query: dict[str, str],
     *,
@@ -251,6 +259,27 @@ async def handle_markets_matched(
     ``.browse()`` / ``.bet_types_available`` / ``.BET_TYPE_GROUPS`` /
     ``.pairs_loaded``). Defaults to the module-level singleton.
     """
+    global _matched_inflight
+    if _matched_inflight >= _MATCHED_MAX_INFLIGHT:
+        # Latency-bound endpoint: shed load with a clean 429 instead of a 10s+ pile-up
+        # (2026-07-03 stress ramp: never trips the per-IP req/s limiter; degrades silently).
+        return 429, {"error": "rate_limited", "detail": "matched: concurrency limit",
+                     "retry_after": 1}
+    _matched_inflight += 1
+    try:
+        return await _handle_markets_matched_inner(query, dao=dao, equivalence=equivalence,
+                                                   force_refresh=force_refresh)
+    finally:
+        _matched_inflight -= 1
+
+
+async def _handle_markets_matched_inner(
+    query: dict[str, str],
+    *,
+    dao: Any,
+    equivalence: Any = None,
+    force_refresh: bool = False,
+) -> tuple[int, dict[str, Any]]:
     if equivalence is None:
         from pytheum.equivalence.index import get_index
         equivalence = get_index()

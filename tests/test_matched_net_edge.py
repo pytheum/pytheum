@@ -52,3 +52,16 @@ def test_net_edge_sort_ranks_real_first_unpriced_last() -> None:
     ranked = sorted([unpriced, phantom, real], key=key, reverse=True)
     assert ranked[0] is real
     assert ranked[-1] is unpriced
+
+
+async def test_matched_inflight_cap_sheds_load() -> None:
+    """Beyond _MATCHED_MAX_INFLIGHT concurrent requests → clean 429 (not a pile-up)."""
+    from pytheum.api import markets_matched as mm
+    old = mm._MATCHED_MAX_INFLIGHT
+    mm._MATCHED_MAX_INFLIGHT = 0  # saturate immediately
+    try:
+        status, body = await mm.handle_markets_matched({}, dao=None, equivalence=None)
+        assert status == 429
+        assert body["error"] == "rate_limited" and body["retry_after"] == 1
+    finally:
+        mm._MATCHED_MAX_INFLIGHT = old
