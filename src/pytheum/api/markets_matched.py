@@ -144,6 +144,25 @@ def _parse_bet_type_filter(
     return result or None
 
 
+def _pm_fetch_candidates(pair: dict[str, Any]) -> list[str]:
+    """PM leg id candidates for the store lookup, in preference order.
+
+    The pit store keys markets by ``markets.id`` (condition-id derived for PM),
+    but the export's ``pm_ref`` is the gamma-numeric form — a raw pm_ref lookup
+    never matched, so the PM leg silently never hydrated and the net_edge/spread
+    arb columns were always empty (2026-07-03: /v1/markets/matched showed 0 PM
+    legs while t_find_divergences, which resolves via polymarket_market_id,
+    worked). Try the condition-id forms too; unknown ids are harmless
+    (fetch_markets_by_ids ignores them). Mirrors markets_equivalents' multi-id
+    resolution.
+    """
+    cid = pair.get("pm_condition_id")
+    cands = [pair.get("pm_ref")]
+    if cid:
+        cands += [f"polymarket:{cid}", cid]
+    return [c for c in cands if c]
+
+
 def _hydrate_side(
     ref: str | None,
     title: str | None,
@@ -371,7 +390,7 @@ async def _handle_markets_matched_inner(
             k_ref = f"kalshi:{k_ref}"
         pm_ref = pair.get("pm_ref")
         normalized_pairs.append((k_ref, pm_ref, pair))
-        for ref in (k_ref, pm_ref):
+        for ref in (k_ref, *_pm_fetch_candidates(pair)):
             if ref and ref not in seen_ids:
                 seen_ids.add(ref)
                 all_ids.append(ref)
@@ -386,7 +405,8 @@ async def _handle_markets_matched_inner(
     pairs: list[dict[str, Any]] = []
     for k_ref, pm_ref, pair in normalized_pairs:
         k_row = market_cache.get(k_ref) if k_ref else None
-        pm_row = market_cache.get(pm_ref) if pm_ref else None
+        pm_row = next((market_cache[c] for c in _pm_fetch_candidates(pair)
+                       if c in market_cache), None)
 
         # min_volume filter: skip only when we have a hydrated volume that is
         # below the threshold.

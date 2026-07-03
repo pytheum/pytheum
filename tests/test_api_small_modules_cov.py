@@ -636,3 +636,42 @@ async def test_get_has_equivalent_flag() -> None:
     )
     assert body["meta"]["has_equivalent"] is True
     assert body["meta"]["matched_via"] == "kalshi_ticker"
+
+
+async def test_matched_hydrates_pm_leg_via_condition_id() -> None:
+    """Regression (2026-07-03): PM leg must hydrate when the store keys PM by the
+    condition-id form, not the gamma pm_ref. Before the fix the PM leg was always
+    None → empty net_edge/spread arb radar on /v1/markets/matched."""
+    idx = _matched_index([{
+        "kalshi_ref": "kalshi:KX-A", "kalshi_ticker": "KX-A",
+        "pm_ref": "polymarket:2702712", "pm_gamma_id": "2702712",
+        "pm_condition_id": "0xABC", "bet_type": "moneyline",
+        "method": "structured_key", "confidence": 1.0,
+        "kalshi_title": "kt", "pm_title": "pt",
+    }])
+    # store keys PM by the condition-prefixed markets.id — NOT the gamma pm_ref
+    store = {
+        "kalshi:KX-A": {"id": "kalshi:KX-A", "venue": "kalshi", "status": "active",
+                        "volume_usd": 100.0,
+                        "payload": {"outcomePrices": "[0.5,0.5]", "bestBid": "0.10", "bestAsk": "0.20"}},
+        "polymarket:0xABC": {"id": "polymarket:0xABC", "venue": "polymarket", "status": "active",
+                             "volume_usd": 50.0,
+                             "payload": {"outcomePrices": "[0.5,0.5]", "bestBid": "0.85", "bestAsk": "0.95"}},
+    }
+    _, body = await handle_markets_matched({}, dao=_BatchDao(store), equivalence=idx)
+    pm = body["pairs"][0]["polymarket"]
+    assert pm["implied_yes"] is not None, "PM leg must hydrate via condition_id"
+    assert "net_edge" in body["pairs"][0]["cross_venue"], "arb radar computes with both legs booked"
+
+
+async def test_matched_pm_leg_still_hydrates_via_gamma_ref() -> None:
+    """Back-compat: if the store DOES key PM by the gamma pm_ref, that still works."""
+    idx = _matched_index([_pair("A", "1")])
+    store = {
+        "kalshi:A": {"id": "kalshi:A", "venue": "kalshi", "status": "active", "volume_usd": 1.0,
+                     "payload": {"outcomePrices": "[0.5,0.5]", "bestBid": "0.10", "bestAsk": "0.20"}},
+        "polymarket:1": {"id": "polymarket:1", "venue": "polymarket", "status": "active", "volume_usd": 1.0,
+                         "payload": {"outcomePrices": "[0.5,0.5]", "bestBid": "0.85", "bestAsk": "0.95"}},
+    }
+    _, body = await handle_markets_matched({}, dao=_BatchDao(store), equivalence=idx)
+    assert body["pairs"][0]["polymarket"]["implied_yes"] is not None
