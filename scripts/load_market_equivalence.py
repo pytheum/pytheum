@@ -15,8 +15,12 @@ our side, or conditionId in a future export) lifts resolution without code
 changes. 2026-06-11 baseline: 132,946 loaded / ~30k slug-resolved / 4,919
 both-legs-active.
 
-Replace-all semantics: his build regenerates the whole set deterministically,
-so each load TRUNCATEs and re-inserts.
+Refresh semantics: each load UPSERTs — new (kalshi, slug) pairs are inserted, and
+EXISTING rows are re-resolved (polymarket_market_id, metadata, loaded_at) against
+the CURRENT markets table. This is load-bearing: Polymarket recycles gamma ids, so
+a row's slug->markets.id resolution goes stale over time; the prior DO-NOTHING made
+re-runs no-ops, freezing the base at its first load (the 2026-06-11 → 1.7%-resolve
+drift that darkened the matched arb radar). Upsert self-heals every row per load.
 
 Usage:
     python -m scripts.load_market_equivalence \
@@ -140,7 +144,19 @@ async def load(path: Path, source_commit: str | None) -> None:
                 "(kalshi_market_id, polymarket_slug, polymarket_market_id, bet_type, "
                 " method, slice, confidence, domain, source_commit) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) "
-                "ON CONFLICT (kalshi_market_id, polymarket_slug) DO NOTHING",
+                # Upsert-REFRESH, not DO NOTHING: an existing row's
+                # polymarket_market_id is a slug->markets.id resolution frozen at
+                # its last load. Polymarket recycles gamma ids, so DO NOTHING let
+                # rows go stale — the 2026-06-11 base drifted to 1.7% active-resolve
+                # over 22 days because re-runs never refreshed it (matched arb radar
+                # went dark). Re-resolve every row against current markets on each
+                # load so the table self-heals; loaded_at tracks real freshness.
+                "ON CONFLICT (kalshi_market_id, polymarket_slug) DO UPDATE SET "
+                "  polymarket_market_id = EXCLUDED.polymarket_market_id, "
+                "  bet_type = EXCLUDED.bet_type, method = EXCLUDED.method, "
+                "  slice = EXCLUDED.slice, confidence = EXCLUDED.confidence, "
+                "  domain = EXCLUDED.domain, source_commit = EXCLUDED.source_commit, "
+                "  loaded_at = now()",
                 rows,
             )
         n = await con.fetchval("SELECT count(*) FROM market_equivalence")
