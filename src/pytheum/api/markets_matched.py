@@ -36,7 +36,7 @@ offset : int, default 0
 from __future__ import annotations
 
 import contextlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pytheum.api._bounded_cache import BoundedTTLCache
@@ -143,7 +143,7 @@ def _iso_to_dt(value: Any) -> datetime | None:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def _leg_live(row: dict[str, Any] | None, now: datetime) -> bool:
@@ -442,7 +442,7 @@ async def _handle_markets_matched_inner(
 
     # Hydrate each pair from the in-memory cache.
     pairs: list[dict[str, Any]] = []
-    _now = datetime.now(timezone.utc)
+    _now = datetime.now(UTC)
     for k_ref, pm_ref, pair in normalized_pairs:
         k_row = market_cache.get(k_ref) if k_ref else None
         pm_row = next((market_cache[c] for c in _pm_fetch_candidates(pair)
