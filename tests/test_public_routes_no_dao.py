@@ -132,3 +132,45 @@ async def test_search_returns_200_without_dao() -> None:
     assert resp.json()["meta"]["degraded_reason"] == "db_unavailable"
     assert resp_noq.status_code == 200
     assert resp_noq.json()["meta"]["error"] == "missing_query"
+
+
+# --- RouterApp overrides (llms_txt + text_routes) — the :8445 wrapper-process fix ---
+
+async def _collect_response(app, path):
+    sent = []
+    async def send(msg): sent.append(msg)
+    async def receive(): return {"type": "http.request"}
+    await app({"type": "http", "method": "GET", "path": path, "query_string": b""}, receive, send)
+    status = next(m["status"] for m in sent if m["type"] == "http.response.start")
+    body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    ctype = dict(next(m for m in sent if m["type"] == "http.response.start")["headers"])
+    return status, body.decode(), ctype.get(b"content-type", b"").decode()
+
+
+def test_routerapp_llms_override_served():
+    import asyncio
+    from pytheum.routing import Router, RouterApp
+    app = RouterApp(Router(), llms_txt="BASE\n## EXTRA SECTION")
+    status, body, ctype = asyncio.run(_collect_response(app, "/llms.txt"))
+    assert status == 200 and "EXTRA SECTION" in body and "text/plain" in ctype
+
+
+def test_routerapp_llms_default_unchanged():
+    import asyncio
+    from pytheum.llms_txt import LLMS_TXT
+    from pytheum.routing import Router, RouterApp
+    app = RouterApp(Router())
+    status, body, _ = asyncio.run(_collect_response(app, "/llms.txt"))
+    assert status == 200 and body == LLMS_TXT
+
+
+def test_routerapp_text_route_served_and_error_safe():
+    import asyncio
+    from pytheum.routing import Router, RouterApp
+    app = RouterApp(Router(), text_routes={"/v1/stream/metrics": lambda: "metric_a 1\n"})
+    status, body, ctype = asyncio.run(_collect_response(app, "/v1/stream/metrics"))
+    assert status == 200 and body == "metric_a 1\n" and "text/plain" in ctype
+    def boom() -> str: raise RuntimeError("x")
+    app2 = RouterApp(Router(), text_routes={"/v1/stream/metrics": boom})
+    status2, body2, _ = asyncio.run(_collect_response(app2, "/v1/stream/metrics"))
+    assert status2 == 500 and "text_route_failed" in body2
