@@ -1017,23 +1017,61 @@ async def get_market(
     return await _get_market(path, {}, base_url, ref=market_ref)
 
 
+_HYPERLIQUID_NOTE = (
+    "Hyperliquid leg prices (implied_yes/as_of) are a mint-time daily snapshot, not live "
+    "quotes — treat cross-venue spreads involving the HL leg as indicative, not executable."
+)
+
+
+def _attach_hyperliquid_related(resp: dict[str, Any], market_ref: str) -> None:
+    """Attach the Hyperliquid related-tier rows to *resp* (in place).
+
+    Rows come verbatim from the local HL-related index (venue-explicit `legs`
+    shape) looked up by the ref's parsed forms — no extra venue calls. A
+    missing/unloadable index degrades to [] + hyperliquid_file_missing: true;
+    it never raises.
+    """
+    try:
+        from pytheum.related.hl_index import get_index as _get_hl_index
+        hl = _get_hl_index()
+    except Exception:
+        hl = None
+    if hl is None or hl.file_missing:
+        resp["hyperliquid_related"] = []
+        resp["hyperliquid_file_missing"] = True
+        return
+    resp["hyperliquid_related"] = hl.rows_for_ref(market_ref)
+    resp["hyperliquid_note"] = _HYPERLIQUID_NOTE
+
+
 async def related_markets(
     market_ref: str,
     *,
     base_url: str = DEFAULT_BASE,
+    include_hyperliquid: bool = False,
 ) -> dict[str, Any]:
     """Correlated cross-venue markets that are NOT settlement-equivalent.
 
     Hedge discovery on verified correlations from pytheum's matcher: each row
     carries the relation type, both venues' bands, and a basis note explaining
     exactly how settlement differs.
+
+    ``include_hyperliquid`` (default False — the default response is unchanged)
+    additionally attaches ``hyperliquid_related`` (rows verbatim from the local
+    HL-related index, each a venue-explicit 2-leg pair where the HL leg carries
+    implied_yes/as_of) and ``hyperliquid_note`` (the snapshot-not-live-quote
+    caveat). When the HL dataset file is missing: ``hyperliquid_related: []``
+    plus ``hyperliquid_file_missing: true``.
     """
     market_ref = _normalize_market_ref(market_ref)
     ref_err = _market_ref_error(market_ref)
     if ref_err:
         return ref_err
     path = f"/v1/markets/{quote(market_ref, safe='')}/related"
-    return await _get_market(path, {}, base_url, ref=market_ref)
+    resp = await _get_market(path, {}, base_url, ref=market_ref)
+    if include_hyperliquid and isinstance(resp, dict) and "error" not in resp:
+        _attach_hyperliquid_related(resp, market_ref)
+    return resp
 
 
 async def equivalent_markets(

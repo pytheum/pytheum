@@ -57,6 +57,18 @@ class _FakeRelated:
     file_missing = False
 
 
+class _FakeHLRelated:
+    pairs_loaded = 112
+    dataset_version = "2026-07-01T04:00:00Z"
+    file_missing = False
+
+
+class _FakeHLRelatedMissing:
+    pairs_loaded = 0
+    dataset_version = None
+    file_missing = True
+
+
 class _FakeDao:
     """DAO with fetch_venue_stats returning two venues."""
 
@@ -121,6 +133,26 @@ async def test_handler_related_block():
     dao = _FakeDaoNoStats()
     _, body = await handle_status({}, dao=dao, related=_FakeRelated())
     assert body["related"]["pairs_loaded"] == 1097
+
+
+@pytest.mark.asyncio
+async def test_handler_hl_related_block():
+    from pytheum.api import status as _status_mod
+    _status_mod._cache = None
+    dao = _FakeDaoNoStats()
+    _, body = await handle_status({}, dao=dao, hl_related=_FakeHLRelated())
+    assert body["hl_related"]["pairs_loaded"] == 112
+    assert body["hl_related"]["dataset_version"] == "2026-07-01T04:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_handler_hl_related_block_missing_file_is_zero_safe():
+    """A silently-missing HL export must show up as 0/null in health, never a 500."""
+    from pytheum.api import status as _status_mod
+    _status_mod._cache = None
+    dao = _FakeDaoNoStats()
+    _, body = await handle_status({}, dao=dao, hl_related=_FakeHLRelatedMissing())
+    assert body["hl_related"] == {"pairs_loaded": 0, "dataset_version": None}
 
 
 @pytest.mark.asyncio

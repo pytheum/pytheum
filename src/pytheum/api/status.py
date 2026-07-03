@@ -20,6 +20,10 @@ Response shape
   "related": {
     "pairs_loaded": <int>
   },
+  "hl_related": {
+    "pairs_loaded": <int>,
+    "dataset_version": "<str | null>"
+  },
   "service": {
     "version": "<str>",
     "now": "<ISO-8601>"
@@ -88,7 +92,9 @@ def _get_version() -> str:
 # ---- Handler ----------------------------------------------------------------
 
 
-async def _build_status(dao: Any, equivalence: Any, related: Any) -> dict[str, Any]:
+async def _build_status(
+    dao: Any, equivalence: Any, related: Any, hl_related: Any = None
+) -> dict[str, Any]:
     """Build the status body. Resolves the index singletons (lazy) when not supplied.
     The platforms block runs the slow per-venue count — best-effort, degrades to empty."""
     if equivalence is None:
@@ -103,6 +109,12 @@ async def _build_status(dao: Any, equivalence: Any, related: Any) -> dict[str, A
             related = get_related()
         except Exception:
             related = None
+    if hl_related is None:
+        try:
+            from pytheum.related.hl_index import get_index as get_hl_related
+            hl_related = get_hl_related()
+        except Exception:
+            hl_related = None
 
     platforms: dict[str, Any] = {}
     fetch_stats = getattr(dao, "fetch_venue_stats", None)
@@ -130,6 +142,14 @@ async def _build_status(dao: Any, equivalence: Any, related: Any) -> dict[str, A
             "dataset_version": getattr(equivalence, "dataset_version", None) if equivalence else None,
         },
         "related": {"pairs_loaded": getattr(related, "pairs_loaded", 0) if related else 0},
+        # Hyperliquid related tier — 0/null when the export file is absent so a
+        # silently-missing HL index is visible in health, never a crash.
+        "hl_related": {
+            "pairs_loaded": getattr(hl_related, "pairs_loaded", 0) if hl_related else 0,
+            "dataset_version": (
+                getattr(hl_related, "dataset_version", None) if hl_related else None
+            ),
+        },
         "service": {
             "version": _get_version(),
             "now": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -140,11 +160,13 @@ async def _build_status(dao: Any, equivalence: Any, related: Any) -> dict[str, A
     return body
 
 
-async def _refresh_cache(dao: Any, equivalence: Any, related: Any) -> None:
+async def _refresh_cache(
+    dao: Any, equivalence: Any, related: Any, hl_related: Any = None
+) -> None:
     """Background refresh — rebuilds the cache without blocking the request that triggered it."""
     global _cache, _refreshing
     try:
-        body = await _build_status(dao, equivalence, related)
+        body = await _build_status(dao, equivalence, related, hl_related)
         _cache = (time.monotonic(), body)
     except Exception:
         pass  # keep the stale cache on failure
@@ -158,6 +180,7 @@ async def handle_status(
     dao: Any,
     equivalence: Any = None,
     related: Any = None,
+    hl_related: Any = None,
 ) -> tuple[int, dict[str, Any]]:
     """GET /v1/status — stale-while-revalidate.
 
@@ -171,9 +194,9 @@ async def handle_status(
         age = time.monotonic() - _cache[0]
         if age >= _CACHE_TTL_S and not _refreshing:
             _refreshing = True
-            asyncio.create_task(_refresh_cache(dao, equivalence, related))
+            asyncio.create_task(_refresh_cache(dao, equivalence, related, hl_related))
         return 200, _cache[1]  # serve fresh-or-stale immediately
 
-    body = await _build_status(dao, equivalence, related)  # cold: build once
+    body = await _build_status(dao, equivalence, related, hl_related)  # cold: build once
     _cache = (time.monotonic(), body)
     return 200, body

@@ -190,9 +190,10 @@ async def t_get_market(market_ref: str) -> dict:
 
 @mcp.tool()
 @enveloped
-async def t_related_markets(market_ref: str) -> dict:
-    """Correlated cross-venue markets that are NOT settlement-equivalent (different bands/sources/deadlines) — hedge discovery, not arbitrage. `market_ref` must be venue-prefixed — 'kalshi:KXFED-25-MAY' or 'polymarket:558936'. Returns a list of related markets, each carrying the relation type, both venues' bands, and a `basis` note spelling out exactly how settlement differs (so you don't mistake a correlated leg for a fungible hedge). Use when you want a correlated position to contextualize or hedge a market but no exact same-question pair exists; use t_equivalent_markets for true same-market pairs."""
-    return await related_markets(market_ref, base_url=DEFAULT_BASE)
+async def t_related_markets(market_ref: str, include_hyperliquid: bool = False) -> dict:
+    """Correlated cross-venue markets that are NOT settlement-equivalent (different bands/sources/deadlines) — hedge discovery, not arbitrage. `market_ref` must be venue-prefixed — 'kalshi:KXFED-25-MAY' or 'polymarket:558936'. Returns a list of related markets, each carrying the relation type, both venues' bands, and a `basis` note spelling out exactly how settlement differs (so you don't mistake a correlated leg for a fungible hedge). `include_hyperliquid` (default false, opt-in) additionally attaches `hyperliquid_related`: venue-explicit rows from the Hyperliquid related tier — each row is a 2-element `legs` list (one hyperliquid leg + one kalshi-or-polymarket leg; every leg carries venue/ref/native_id/title, PM legs add gamma_id/slug, the HL leg adds implied_yes + as_of) plus relation/settlement/basis_note metadata — and `hyperliquid_note`: HL leg prices are a mint-time daily snapshot, NOT live quotes, so treat any cross-venue spread involving the HL leg as indicative, not executable. If the HL dataset file is absent you get `hyperliquid_related: []` + `hyperliquid_file_missing: true` (never an error). Use when you want a correlated position to contextualize or hedge a market but no exact same-question pair exists; use t_equivalent_markets for true same-market pairs."""
+    return await related_markets(market_ref, base_url=DEFAULT_BASE,
+                                 include_hyperliquid=include_hyperliquid)
 
 
 @mcp.tool()
