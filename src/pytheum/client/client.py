@@ -20,7 +20,8 @@ payloads, so methods return parsed dict/list bodies (optionally wrapped in the
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable
+from collections.abc import Awaitable
+from typing import Any
 from urllib.parse import quote
 
 from ._registry import BY_NAME, Endpoint
@@ -97,7 +98,7 @@ class AsyncClient(_ClientBase):
         super().__init__(**kw)
         self._t = AsyncTransport(**self._cfg)
 
-    async def __aenter__(self) -> "AsyncClient":
+    async def __aenter__(self) -> AsyncClient:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
@@ -211,7 +212,7 @@ class Client(_ClientBase):
         super().__init__(**kw)
         self._t = SyncTransport(**self._cfg)
 
-    def __enter__(self) -> "Client":
+    def __enter__(self) -> Client:
         return self
 
     def __exit__(self, *exc: Any) -> None:

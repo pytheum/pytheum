@@ -21,7 +21,6 @@ import httpx
 from .errors import (
     ConnectionFailed,
     PytheumTimeout,
-    RateLimitError,
     error_for_status,
 )
 
@@ -83,9 +82,9 @@ def parse_retry_after(value: str | None) -> float | None:
     if dt is None:
         return None
     import datetime as _dt
-    now = _dt.datetime.now(_dt.timezone.utc)
+    now = _dt.datetime.now(_dt.UTC)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=_dt.timezone.utc)
+        dt = dt.replace(tzinfo=_dt.UTC)
     return max(0.0, (dt - now).total_seconds())
 
 
