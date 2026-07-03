@@ -106,9 +106,10 @@ async def test_matched_net_edge_sort() -> None:
     _, body = await handle_markets_matched(
         {"sort_by": "net_edge"}, dao=_BatchDao(store), equivalence=idx
     )
-    # net_edge is not in _VALID_SORT_BY → silently falls back to volume, but the
-    # cross_venue block still carries the executable net_edge + executable flag.
-    assert body["meta"]["filter"]["sort_by"] == "volume"
+    # net_edge IS a valid sort (fixed 2026-07-03 — the allowlist had lagged the
+    # implemented _build_sort_key branch, silently serving volume order for the
+    # advertised honest-arb-radar sort).
+    assert body["meta"]["filter"]["sort_by"] == "net_edge"
     assert "net_edge" in body["pairs"][0]["cross_venue"]
     assert "executable" in body["pairs"][0]["cross_venue"]
 
