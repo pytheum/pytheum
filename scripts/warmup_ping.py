@@ -48,7 +48,18 @@ _DEFAULT_QUERIES = "bitcoin,ethereum,trump,election"
 def warmup_targets() -> list[str]:
     """Keyless warm paths: status (liveness/process) + a few searches (the cold-buffer path)."""
     queries = [q.strip() for q in os.environ.get("PYTHEUM_WARMUP_QUERIES", _DEFAULT_QUERIES).split(",") if q.strip()]
-    return ["/v1/status", *[f"/v1/markets/search?q={quote(q)}&limit=50" for q in queries]]
+    return [
+        "/v1/status",
+        *[f"/v1/markets/search?q={quote(q)}&limit=50" for q in queries],
+        # The other two customer-first-call cold paths (2026-07-03 bench: t_screen
+        # 7.77s cold vs 111ms warm; t_find_divergences 2.69s cold vs 142ms warm —
+        # docs/bench/2026-07-03-mcp-latency.md). Screen touches the volume-ordered
+        # scan; the equivalents collection fetch touches the pair-hydration path
+        # t_find_divergences fans out over. Same cache-miss-by-design reasoning as
+        # the searches above.
+        "/v1/markets/screen?limit=50",
+        "/v1/markets/equivalents?limit=150",
+    ]
 
 
 def ping(base: str, path: str, *, timeout: float = 30.0) -> tuple[bool, float, str]:
