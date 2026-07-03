@@ -59,15 +59,14 @@ class _ClientBase:
         headers = {"User-Agent": _USER_AGENT, "Accept": "application/json"}
         if api_key:  # edge is keyless today; forward a key if the account ever needs one
             headers["Authorization"] = f"Bearer {api_key}"
-        self._cfg = dict(
-            base_url=base_url.rstrip("/"),
-            headers=headers,
-            limits=build_limits(max_connections, max_keepalive),
-            timeout=build_timeout(connect_timeout, read_timeout, write_timeout, pool_timeout),
-            max_concurrency=max_concurrency,
-            retry=RetryConfig(max_retries=max_retries),
-            http2=http2,
-        )
+        # typed transport config (explicit attrs so the constructors stay mypy-checked)
+        self._base_url = base_url.rstrip("/")
+        self._headers = headers
+        self._limits = build_limits(max_connections, max_keepalive)
+        self._timeout = build_timeout(connect_timeout, read_timeout, write_timeout, pool_timeout)
+        self._max_concurrency = max_concurrency
+        self._retry = RetryConfig(max_retries=max_retries)
+        self._http2 = http2
 
     @staticmethod
     def _spec(name: str, *, ref: str | None = None, wallet: str | None = None,
@@ -96,7 +95,10 @@ class AsyncClient(_ClientBase):
 
     def __init__(self, **kw: Any) -> None:
         super().__init__(**kw)
-        self._t = AsyncTransport(**self._cfg)
+        self._t = AsyncTransport(
+            base_url=self._base_url, headers=self._headers, limits=self._limits,
+            timeout=self._timeout, max_concurrency=self._max_concurrency,
+            retry=self._retry, http2=self._http2)
 
     async def __aenter__(self) -> AsyncClient:
         return self
@@ -210,7 +212,10 @@ class Client(_ClientBase):
 
     def __init__(self, **kw: Any) -> None:
         super().__init__(**kw)
-        self._t = SyncTransport(**self._cfg)
+        self._t = SyncTransport(
+            base_url=self._base_url, headers=self._headers, limits=self._limits,
+            timeout=self._timeout, max_concurrency=self._max_concurrency,
+            retry=self._retry, http2=self._http2)
 
     def __enter__(self) -> Client:
         return self
