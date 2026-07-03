@@ -1471,6 +1471,12 @@ _NOTIONAL_BASIS_DEPTH = (
 _NOTIONAL_BASIS_UNVERIFIED = (
     "unknown: top-of-book size missing on >=1 leg (venue snapshot carries no depth) "
     "— fillable size unverified, treat the edge as unsized")
+_NOTIONAL_BASIS_LIVE_DEPTH = (
+    "min over legs of top-of-book size x executable price at the quoted books "
+    "(buy-YES leg: ask_size x ask; buy-NO leg: bid_size x (1-bid)), taken on the "
+    "cheaper (edge) direction; sizes from live top-of-book fetched at scan time "
+    "(coalesced <=2s), prices from the scan's quoted books; top-of-book level only "
+    "(no deeper levels fetched); fees not netted")
 
 
 def _lockable_notional(a_book: Any, b_book: Any) -> tuple[float | None, str]:
@@ -1500,11 +1506,91 @@ def _lockable_notional(a_book: Any, b_book: Any) -> tuple[float | None, str]:
     return round(min(yes_notional, no_notional), 2), _NOTIONAL_BASIS_DEPTH
 
 
+# Overall deadline for the page-local live-depth overlay: one gather over <= 2 x limit
+# coalesced book GETs. Past it the page ships as-is (honest null), never blocks the scan.
+_DEPTH_OVERLAY_TIMEOUT_S = 4.0
+
+
+def _live_top_sizes(resp: Any, *, flip: bool = False) -> tuple[float, float] | None:
+    """(bid_size, ask_size) from a live /book response's ``top`` block, or None
+    when the fetch failed / degraded (source:"unavailable") / either size is
+    missing — the caller then leaves the row untouched, never guesses.
+    ``flip=True`` swaps the sides: a side-1-mapped poly leg's row book is the
+    COMPLEMENT of the live book (bid' = 1-ask, sizes swap — see
+    _orient_poly_leg), so the live ask size backs the row book's bid."""
+    if not isinstance(resp, dict) or resp.get("error"):
+        return None
+    top = resp.get("top")
+    if not isinstance(top, dict):
+        return None
+    bid_size, ask_size = top.get("bid_size"), top.get("ask_size")
+    if not isinstance(bid_size, (int, float)) or not isinstance(ask_size, (int, float)):
+        return None
+    if flip:
+        bid_size, ask_size = ask_size, bid_size
+    return float(bid_size), float(ask_size)
+
+
+async def _overlay_live_depth(page: list[dict[str, Any]], flips: list[bool],
+                              base_url: str) -> int:
+    """PAGE-LOCAL live-depth overlay for find_divergences.
+
+    The equivalents-route books carry bid/ask but NO sizes, so every row ships
+    max_lockable_notional=null + depth_unverified. For the rows the caller will
+    actually see (post-sort, post-``limit`` slice — rows beyond the page are NOT
+    fetched; bounded cost <= 2 x limit GETs, coalesced server-side ~2s) fetch both
+    legs' live top-of-book concurrently under one _DEPTH_OVERLAY_TIMEOUT_S
+    deadline. Where BOTH legs' sizes parse: overlay the sizes onto COPIES of the
+    row's quoted books (prices + fee-netted yes_ask_net/no_ask_net kept),
+    recompute _lockable_notional, and — when it computes — set the notional, the
+    live-depth basis, and clear the row's depth_unverified warning. Any per-leg
+    failure or the overall timeout leaves the affected rows untouched (honest
+    null). Mutates ``page`` in place; returns the count of rows overlaid."""
+
+    async def _book(ref: Any) -> dict[str, Any] | None:
+        if not isinstance(ref, str) or not ref:
+            return None  # leg missing its id — nothing to fetch
+        path = f"/v1/markets/{quote(ref, safe='')}/book"
+        return await _get(path, {"depth": 1}, base_url)
+
+    tasks = [_book((row.get(leg) or {}).get("market_id"))
+             for row in page for leg in ("a", "b")]
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=_DEPTH_OVERLAY_TIMEOUT_S)
+    except TimeoutError:
+        return 0
+    overlaid = 0
+    for i, row in enumerate(page):
+        a_sizes = _live_top_sizes(results[2 * i])
+        b_sizes = _live_top_sizes(results[2 * i + 1], flip=flips[i])
+        if a_sizes is None or b_sizes is None:
+            continue  # a leg failed to size — leave the row's honest null intact
+        a_leg, b_leg = row.get("a") or {}, row.get("b") or {}
+        a_book, b_book = a_leg.get("book"), b_leg.get("book")
+        if not isinstance(a_book, dict) or not isinstance(b_book, dict):
+            continue
+        a_new = {**a_book, "bid_size": a_sizes[0], "ask_size": a_sizes[1]}
+        b_new = {**b_book, "bid_size": b_sizes[0], "ask_size": b_sizes[1]}
+        notional, _basis = _lockable_notional(a_new, b_new)
+        if notional is None:
+            continue  # direction fields absent — can't verify, keep null
+        row["a"] = {**a_leg, "book": a_new}
+        row["b"] = {**b_leg, "book": b_new}
+        row["max_lockable_notional"] = notional
+        row["notional_basis"] = _NOTIONAL_BASIS_LIVE_DEPTH
+        row["warnings"] = [w for w in row["warnings"] if w != "depth_unverified"]
+        overlaid += 1
+    return overlaid
+
+
 async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float = 0.0,
                            limit: int = 10, seed_limit: int = 12,
                            include_rules: bool = True,
                            fungible_only: bool = False,
-                           include_warned: bool = True) -> dict[str, Any]:
+                           include_warned: bool = True,
+                           include_depth: bool = True) -> dict[str, Any]:
     """v2 cross-venue net-of-fees divergence scanner (#251/#247). Pairs come
     from the VERIFIED equivalence set — the matcher's pre-decided gold pairs
     (132,946 shipped 2026-06-11; we serve them, we don't match) joined to live
@@ -1527,6 +1613,16 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
     Each row also carries ``max_lockable_notional`` (depth-capped fillable USD at
     the quoted top-of-book; null + a depth_unverified warning when either leg's
     size is unknown) and ``notional_basis`` (how that number was computed).
+    ``include_depth`` (default True): PAGE-LOCAL live-depth overlay — the
+    equivalents-route books carry no sizes, so after the final sort + ``limit``
+    slice both legs' live top-of-book are fetched concurrently (<= 2 x limit
+    GETs, coalesced ~2s server-side, one ~4s overall deadline; rows beyond the
+    page are NOT fetched) and rows where both legs size are given a computed
+    ``max_lockable_notional`` (live-depth ``notional_basis``), their
+    ``depth_unverified`` warning cleared, and the page re-sorted (a row that
+    became clean floats above warned rows WITHIN the page). Per-leg failure /
+    timeout leaves the row's honest null untouched; ``depth_overlaid`` counts
+    the rows updated. ``False`` skips all book fetches.
     """
     _ = seed_limit  # v1 compat — pair recall now comes from the equivalence set
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
@@ -1652,6 +1748,9 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
             # For side-mapped game markets: which poly outcome the quotes refer
             # to after re-orientation (both legs now quote the SAME side).
             "poly_outcome": p.get("poly_outcome"),
+            # INTERNAL (popped before return): side-1-mapped pairs carry a
+            # COMPLEMENTED poly book, so a live-book overlay must swap sizes.
+            "_poly_flipped": side == 1,
             "title_similarity": round(
                 _title_sim(a.get("question") or "", b.get("question") or ""), 2),
             # either_leg_parked: a parked-wall quote (frozen behind a tight
@@ -1701,14 +1800,31 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
         return (1 if d.get("warnings") else 0, -eff)
 
     out.sort(key=_rank_key)
+    # PAGE-LOCAL live-depth overlay: only the rows the caller actually sees (the
+    # post-sort, post-limit slice) get their legs' live top-of-book fetched — the
+    # equivalents-route books carry no sizes, so this is what makes
+    # max_lockable_notional actually populate. Bounded cost: <= 2 x limit GETs
+    # (coalesced ~2s server-side) under one ~4s deadline; any leg that fails
+    # keeps its row's honest null + depth_unverified warning.
+    page = out[:limit]
+    flips = [bool(row.pop("_poly_flipped", False)) for row in page]
+    depth_overlaid = 0
+    if include_depth and page:
+        depth_overlaid = await _overlay_live_depth(page, flips, base_url)
+        if depth_overlaid:
+            # a row that became clean floats above warned rows within the page.
+            page.sort(key=_rank_key)
     return {
-        "divergences": out[:limit],
+        "divergences": page,
         "pairs_scanned": len(pairs),
         "orientation_excluded": orientation_excluded,
         "parked_excluded": parked_excluded,
         "suspect_excluded": suspect_excluded,
         "extreme_excluded": extreme_excluded,
         "warned_filtered": warned_filtered,
+        # rows on THIS page whose max_lockable_notional was verified from a live
+        # top-of-book fetch (see notional_basis; overlay is page-local by design).
+        "depth_overlaid": depth_overlaid,
         "ranked_by": ("clean-first (rows with any `warnings` sort after clean rows), then "
                       "annualized_net_edge (capital-efficiency; falls back to net_edge when "
                       "horizon unknown)"),

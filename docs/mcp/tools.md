@@ -344,6 +344,7 @@ on the same question, with settlement rules inlined.
 | `include_rules` | bool | true | no — bundle each pair's settlement text (400-char truncated) |
 | `fungible_only` | bool | false | no — deterministic/structural pairs only |
 | `include_warned` | bool | true | no — keep warned rows (demoted + labeled); `false` filters them out |
+| `include_depth` | bool | true | no — page-local live-depth overlay (sizes `max_lockable_notional`); `false` skips all book fetches |
 
 **Mode:** Hosted (needs live book join; offline returns pairs with no edge) ·
 **Annotations:** readOnly, **not idempotent** (live books move between calls)
@@ -361,13 +362,27 @@ unverified, never guessed) + `notional_basis` (documents the computation), both
 legs (`a`=Kalshi, `b`=Polymarket) with `is_parked_wall`/`last_move_age_s`, and
 `resolution.{kalshi,polymarket}` when `include_rules`. Plus `pairs_scanned`,
 `orientation_excluded`, `parked_excluded`, `suspect_excluded`, `extreme_excluded`,
-`warned_filtered` (rows dropped when `include_warned=false`), `ranked_by`, `note`.
+`warned_filtered` (rows dropped when `include_warned=false`), `depth_overlaid`
+(rows sized by the live-depth overlay), `ranked_by`, `note`.
 
 **Ordering semantics:** rows with ANY warning sort AFTER all clean rows; within
 each group the annualized-edge (fallback raw-edge) order is kept. **A large edge
 with warnings is usually quote noise** — a stale, parked, or hours-from-resolution
 leg, not free money (a live probe saw a flagged #1 "edge" collapse 23.1c → −4c on
 requote). See `warnings` before acting.
+
+**Live-depth overlay (`include_depth`, default true) — page-local:** the
+equivalents-route books carry bid/ask but no sizes, so without the overlay every
+row ships `max_lockable_notional: null` + `depth_unverified`. After the final
+sort + `limit` slice, both legs of each returned row get a live top-of-book fetch
+(`/v1/markets/{ref}/book?depth=1`, coalesced ~2s server-side) — bounded cost
+≤ 2×`limit` GETs under one ~4s overall deadline; **rows beyond `limit` are never
+fetched**. Where both legs' sizes parse, the sizes are overlaid onto the row's
+quoted books (prices unchanged), `max_lockable_notional` is recomputed,
+`notional_basis` notes the sizes came from a live scan-time fetch, the
+`depth_unverified` warning is removed, and the page is re-sorted — a row that
+became clean floats above warned rows *within the page*. A failed/timed-out leg
+leaves its row's honest null untouched. `depth_overlaid` counts updated rows.
 
 ```jsonc
 // t_find_divergences(min_net_edge=0.02, limit=1)
@@ -388,7 +403,7 @@ requote). See `warnings` before acting.
       "resolution": { "kalshi": "Resolves YES if the FOMC…", "polymarket": "Resolves Yes if the Fed…" } }
   ],
   "pairs_scanned": 150, "orientation_excluded": 12, "parked_excluded": 3, "suspect_excluded": 1,
-  "warned_filtered": 0,
+  "warned_filtered": 0, "depth_overlaid": 1,
   "ranked_by": "clean-first (rows with any `warnings` sort after clean rows), then annualized_net_edge (capital-efficiency; falls back to net_edge when horizon unknown)"
 }
 ```
