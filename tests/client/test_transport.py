@@ -376,19 +376,10 @@ def test_parse_retry_after_past_http_date_clamped_to_zero() -> None:
     assert parse_retry_after(header_val) == 0.0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG in parse_retry_after (_transport.py): a header value that is neither a "
-        "valid float nor a valid HTTP-date raises an uncaught ValueError instead of "
-        "returning None. email.utils.parsedate_to_datetime raises ValueError for "
-        "unparseable input on Python 3.10+, and the surrounding try/except only "
-        "wraps the float() parse, not the parsedate_to_datetime() call. A malformed "
-        "Retry-After header from the API would currently crash the transport instead "
-        "of gracefully falling back to the computed backoff."
-    ),
-)
 def test_parse_retry_after_garbage_string_should_return_none() -> None:
+    # Regression: a malformed Retry-After (neither float nor HTTP-date) must fall
+    # back to computed backoff, not crash the transport. Fixed 2026-07-03 by
+    # guarding the parsedate_to_datetime() call (it raises on Py3.10+).
     assert parse_retry_after("not-a-valid-retry-after-value") is None
 
 

@@ -74,7 +74,12 @@ def parse_retry_after(value: str | None) -> float | None:
         return max(0.0, float(value))
     except ValueError:
         pass
-    dt = email.utils.parsedate_to_datetime(value)
+    try:
+        dt = email.utils.parsedate_to_datetime(value)
+    except (ValueError, TypeError):
+        # Py3.10+ raises (rather than returns None) on an unparseable HTTP-date;
+        # a malformed Retry-After must fall back to computed backoff, never crash.
+        return None
     if dt is None:
         return None
     import datetime as _dt
