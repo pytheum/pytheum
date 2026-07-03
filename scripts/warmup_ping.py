@@ -57,8 +57,11 @@ def warmup_targets() -> list[str]:
         # scan; the equivalents collection fetch touches the pair-hydration path
         # t_find_divergences fans out over. Same cache-miss-by-design reasoning as
         # the searches above.
-        "/v1/markets/screen?limit=50",
-        "/v1/markets/equivalents?limit=150",
+        # EXACT param combos the MCP tools issue — a nearby-but-different combo is a
+        # different cache key / query shape and leaves the real path cold (2026-07-03
+        # stress ramp: t_screen still 12.8s cold while screen?limit=50 was warm).
+        "/v1/markets/screen?status=active&sort_by=volume&limit=50",
+        "/v1/markets/equivalents?limit=500&include_rules=true",
     ]
 
 
