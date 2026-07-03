@@ -269,11 +269,29 @@ but no exact same-question pair exists. For true same-market pairs use
 | Param | Type | Default | Required |
 |---|---|---|---|
 | `market_ref` | string | — | yes |
+| `include_hyperliquid` | boolean | `false` | no |
 
 **Mode:** Offline · **Annotations:** readOnly, idempotent
 
 **Returns:** a list of related markets, each with the relation type, both venues'
 bands, and a `basis` note spelling out exactly how settlement differs.
+
+With `include_hyperliquid: true` (opt-in — the default response is unchanged),
+the payload additionally carries:
+
+- `hyperliquid_related` — rows verbatim from the Hyperliquid related tier
+  (loaded from `PYTHEUM_HL_RELATED_PATH`), looked up by this market's
+  identifiers. Each row is venue-explicit: a 2-element `legs` list (exactly one
+  `hyperliquid` leg plus one `kalshi`-or-`polymarket` leg; every leg carries
+  `venue`/`ref`/`native_id`/`title`, Polymarket legs add `gamma_id` + `slug`,
+  the HL leg adds `implied_yes` (0–1) + `as_of` (ISO)), flattened
+  `<venue>_ref`/`<venue>_native_id`/`<venue>_title` fields, plus
+  `tier`/`relation`/`settlement`/`basis_note` metadata.
+- `hyperliquid_note` — a standing caveat: HL leg prices (`implied_yes`/`as_of`)
+  are a **mint-time daily snapshot, not live quotes** — treat cross-venue
+  spreads involving the HL leg as indicative, not executable.
+- When the HL dataset file is missing the tool degrades (never errors):
+  `hyperliquid_related: []` + `hyperliquid_file_missing: true`.
 
 ```jsonc
 // t_related_markets("kalshi:KXBTC-25DEC-100K")
@@ -285,6 +303,25 @@ bands, and a `basis` note spelling out exactly how settlement differs.
       "basis": "Different strike; correlated but not fungible — a hedge, not a lock." }
   ],
   "count": 1
+}
+```
+
+```jsonc
+// t_related_markets("kalshi:KXBTC-25DEC-100K", include_hyperliquid=true) — extra fields
+{
+  // ...the normal payload above, plus:
+  "hyperliquid_related": [
+    { "tier": "related", "relation": "crypto_threshold_in_band_divergent",
+      "legs": [
+        { "venue": "kalshi", "ref": "kalshi:KXBTC-25DEC-100K",
+          "native_id": "KXBTC-25DEC-100K", "title": "Bitcoin above $100k on Dec 31?" },
+        { "venue": "hyperliquid", "ref": "hyperliquid:BTC-100K-DEC",
+          "native_id": "BTC-100K-DEC", "title": "BTC >= $100k Dec 31",
+          "implied_yes": 0.61, "as_of": "2026-07-01T04:00:00Z" }
+      ],
+      "asset": "BTC", "basis_note": "Same threshold; HL settles on a different index print." }
+  ],
+  "hyperliquid_note": "Hyperliquid leg prices (implied_yes/as_of) are a mint-time daily snapshot, not live quotes — treat cross-venue spreads involving the HL leg as indicative, not executable."
 }
 ```
 
