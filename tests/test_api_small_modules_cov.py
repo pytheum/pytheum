@@ -675,3 +675,40 @@ async def test_matched_pm_leg_still_hydrates_via_gamma_ref() -> None:
     }
     _, body = await handle_markets_matched({}, dao=_BatchDao(store), equivalence=idx)
     assert body["pairs"][0]["polymarket"]["implied_yes"] is not None
+
+
+async def test_matched_resolved_leg_excluded_and_sorts_last() -> None:
+    """PM keeps status='active' on resolved markets → a status-only is_live let
+    settled pairs lead the net_edge radar with phantom edges. The resolution_at
+    guard fixes it: resolved pairs are not-live (sort last), and live_only prunes them."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    past = (now - timedelta(days=3)).isoformat()
+    future = (now + timedelta(days=30)).isoformat()
+    idx = _matched_index([_pair("LIVE", "1"), _pair("DEAD", "2")])
+    # DEAD: PM leg still status='active' (the quirk) but resolved in the past.
+    store = {
+        "kalshi:LIVE": {"id": "kalshi:LIVE", "status": "active", "resolution_at": future,
+                        "volume_usd": 1.0,
+                        "payload": {"outcomePrices": "[0.5,0.5]", "bestBid": "0.10", "bestAsk": "0.20"}},
+        "polymarket:1": {"id": "polymarket:1", "status": "active", "resolution_at": future,
+                         "volume_usd": 1.0,
+                         "payload": {"outcomePrices": "[0.5,0.5]", "bestBid": "0.85", "bestAsk": "0.95"}},
+        "kalshi:DEAD": {"id": "kalshi:DEAD", "status": "active", "resolution_at": past,
+                        "volume_usd": 9e9,  # huge lifetime volume — would dominate a naive sort
+                        "payload": {"outcomePrices": "[0.5,0.5]", "bestBid": "0.66", "bestAsk": "0.68"}},
+        "polymarket:2": {"id": "polymarket:2", "status": "active", "resolution_at": past,
+                         "volume_usd": 9e9,
+                         "payload": {"outcomePrices": "[0.5,0.5]", "bestBid": "0.9990", "bestAsk": "0.9999"}},
+    }
+    # default (live_only off): both returned, but LIVE sorts first, DEAD is not-live
+    _, body = await handle_markets_matched({"sort_by": "net_edge"}, dao=_BatchDao(store), equivalence=idx)
+    ids = [p["kalshi"]["id"] for p in body["pairs"]]
+    assert ids[0] == "kalshi:LIVE", f"live pair must lead the radar, got {ids}"
+    dead = next(p for p in body["pairs"] if p["kalshi"]["id"] == "kalshi:DEAD")
+    assert dead["is_live"] is False, "resolved-but-status-active pair must read not-live"
+    # live_only=true: DEAD pruned entirely
+    _, body2 = await handle_markets_matched(
+        {"sort_by": "net_edge", "live_only": "true"}, dao=_BatchDao(store), equivalence=idx)
+    assert [p["kalshi"]["id"] for p in body2["pairs"]] == ["kalshi:LIVE"]
+    assert body2["meta"]["filter"]["live_only"] is True

@@ -36,6 +36,7 @@ offset : int, default 0
 from __future__ import annotations
 
 import contextlib
+from datetime import datetime, timezone
 from typing import Any
 
 from pytheum.api._bounded_cache import BoundedTTLCache
@@ -120,6 +121,42 @@ def _parse_fungible_only(query: dict[str, str]) -> bool:
     """
     raw = (query.get("fungible_only") or "").strip().lower()
     return raw in ("true", "1", "yes")
+
+
+def _parse_live_only(query: dict[str, str]) -> bool:
+    """Opt-in filter to EXCLUDE resolved pairs entirely (default off, backward-compat).
+
+    The default view already ranks live pairs first (is_live is the primary sort
+    key, and _leg_live now treats resolved-but-status-active legs as not-live), so
+    the radar leads with tradeable pairs without dropping anything. Pass
+    ``live_only=true`` for a fully-pruned list (e.g. the arb radar).
+    """
+    raw = (query.get("live_only") or "").strip().lower()
+    return raw in ("true", "1", "yes")
+
+
+def _iso_to_dt(value: Any) -> datetime | None:
+    """Parse an ISO-8601 resolution timestamp → aware datetime, or None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _leg_live(row: dict[str, Any] | None, now: datetime) -> bool:
+    """A leg is live only if active AND not past its resolution time.
+
+    Polymarket leaves ``status='active'`` on RESOLVED markets, so status alone is
+    unreliable — the ``resolution_at`` check catches settled legs that otherwise
+    read as live and lead the net_edge radar with untradeable phantom edges.
+    """
+    if not row or row.get("status") != "active":
+        return False
+    res = _iso_to_dt(row.get("resolution_at"))
+    return not (res is not None and res <= now)
 
 
 def _parse_bet_type_filter(
@@ -308,6 +345,7 @@ async def _handle_markets_matched_inner(
     min_vol = _parse_min_volume(query)
     sort_by = _parse_sort_by(query)
     fungible_only = _parse_fungible_only(query)
+    live_only = _parse_live_only(query)
 
     # Resolve bet_type filter (group names expanded to concrete set).
     bet_type_param = query.get("bet_type") or query.get("bet_types")
@@ -336,6 +374,7 @@ async def _handle_markets_matched_inner(
         f"|min_volume={min_vol}"
         f"|sort_by={sort_by}"
         f"|fungible_only={fungible_only}"
+        f"|live_only={live_only}"
         f"|bet_types={','.join(sorted(bet_types_filter)) if bet_types_filter else ''}"
         f"|q={query_substr or ''}"
         f"|league={league_filter or ''}"
@@ -348,7 +387,7 @@ async def _handle_markets_matched_inner(
 
     # When fungible_only or min_vol is active we need the full filtered list to
     # paginate and count excluded; over-fetch with no internal limit cap.
-    _overfetch = fungible_only or (min_vol is not None)
+    _overfetch = fungible_only or (min_vol is not None) or live_only
     _browse_kwargs: dict[str, object] = dict(
         bet_types=bet_types_filter,
         query_substr=query_substr,
@@ -403,6 +442,7 @@ async def _handle_markets_matched_inner(
 
     # Hydrate each pair from the in-memory cache.
     pairs: list[dict[str, Any]] = []
+    _now = datetime.now(timezone.utc)
     for k_ref, pm_ref, pair in normalized_pairs:
         k_row = market_cache.get(k_ref) if k_ref else None
         pm_row = next((market_cache[c] for c in _pm_fetch_candidates(pair)
@@ -423,14 +463,15 @@ async def _handle_markets_matched_inner(
         )
         cv = _cross_venue(k_block, pm_block, bet_type=pair.get("bet_type"))
 
-        # live = both legs currently active in the store. Settled markets keep
-        # their lifetime volume_usd, so a pure volume sort ranks dead 2022-24
-        # pairs above live ones; is_live is the primary sort key (below) so the
-        # default surfaces tradeable pairs first. Exposed so callers can filter.
-        is_live = (
-            (k_row or {}).get("status") == "active"
-            and (pm_row or {}).get("status") == "active"
-        )
+        # live = both legs active AND not past resolution. Polymarket keeps
+        # status='active' on RESOLVED markets, so a status-only check let settled
+        # sports pairs read as live and lead the net_edge radar with phantom edges
+        # (a resolved leg pinned at ~1.0 implies a big untradeable "arb"). The
+        # resolution_at guard in _leg_live fixes that. is_live is the primary sort
+        # key (below); live_only (default) drops non-live pairs from the radar.
+        is_live = _leg_live(k_row, _now) and _leg_live(pm_row, _now)
+        if live_only and not is_live:
+            continue
 
         pairs.append({
             "kalshi": k_block,
@@ -461,6 +502,7 @@ async def _handle_markets_matched_inner(
         "min_volume": min_vol,
         "sort_by": sort_by,
         "fungible_only": fungible_only,
+        "live_only": live_only,
         "limit": limit,
         "offset": offset,
     }
