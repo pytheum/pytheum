@@ -69,7 +69,7 @@ _MAX_CANDIDATES = 500
 # is the serving-side mitigation.)
 _MIN_CANDIDATES = 500
 
-# The pairs join (136k equivalence rows x markets) plus the 300-id staleness
+# The pairs join (140k+ equivalence rows x markets) plus the 300-id staleness
 # window run ~20s on the shared-compute DB — past the MCP transport's patience
 # (the 2026-06-11 benchmark saw every t_find_divergences call die "Server
 # disconnected" once 6 concurrent agents kept the cache cold).  Everything

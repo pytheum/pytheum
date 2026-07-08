@@ -1593,7 +1593,7 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
                            include_depth: bool = True) -> dict[str, Any]:
     """v2 cross-venue net-of-fees divergence scanner (#251/#247). Pairs come
     from the VERIFIED equivalence set — the matcher's pre-decided gold pairs
-    (132,946 shipped 2026-06-11; we serve them, we don't match) joined to live
+    (140k+ pairs, refreshed daily; we serve them, we don't match) joined to live
     books via /v1/markets/equivalents. Each pair carries `matched_by` (the
     method that decided it: spread_match / game_title_match / human_adjudicated
     / ...) and `match_confidence` (judged slice only) so a wrong match is

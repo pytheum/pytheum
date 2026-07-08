@@ -141,7 +141,7 @@ def register_group_A(
     ))
     registry.add(RouteSpec(
         "GET", "/v1/markets/matched", _markets_matched,
-        summary="Paginated view of all 136k+ settlement-verified cross-venue pairs.",
+        summary="Paginated view of all 140k+ settlement-verified cross-venue pairs.",
         tags=["equivalence"],
         params={
             "bet_type": "Filter by bet type or group alias (sports)",

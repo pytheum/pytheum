@@ -1,7 +1,7 @@
 """GET /v1/markets/matched — browse cross-venue matched pairs.
 
 Returns a paginated, optionally filtered view of the full pytheum equivalence
-dataset (136k settlement-verified Kalshi<->Polymarket pairs), with live prices
+dataset (140k+ settlement-verified Kalshi<->Polymarket pairs), with live prices
 hydrated from the market store where available.
 
 Query parameters

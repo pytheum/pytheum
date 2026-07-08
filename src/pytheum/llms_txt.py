@@ -41,7 +41,7 @@ _ENDPOINT_ROWS: tuple[tuple[str, str], ...] = (
      "Collection of verified Kalshi<->Polymarket pairs joined to live"
      " quotes (used by t_find_divergences)."),
     ("GET /v1/markets/matched",
-     "Paginated, filterable view of all 136k settlement-verified"
+     "Paginated, filterable view of all 140k+ settlement-verified"
      " cross-venue pairs with live prices."),
     ("GET /v1/markets/context-batch",
      "Batch news/social/macro context for up to 25 markets in one call."),
