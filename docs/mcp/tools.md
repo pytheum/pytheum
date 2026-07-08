@@ -140,7 +140,7 @@ published separately, not asserted here).
 
 ### `t_equivalent_markets`
 
-Find the SAME market on the other venue from the 136k-pair settlement-verified
+Find the SAME market on the other venue from the 140k+-pair settlement-verified
 equivalence dataset, with both venues' live prices and the cross-venue spread.
 
 **Use when:** you have one market and want its exact counterpart on the other
@@ -175,7 +175,7 @@ venue (not a fuzzy title match).
 
 ### `t_matched_pairs`
 
-Browse the verified cross-venue matched-pairs dataset (136k pairs) with both
+Browse the verified cross-venue matched-pairs dataset (140k+ pairs) with both
 venues' live prices and the cross-venue spread per pair.
 
 **Use when:** you want to *survey* matched pairs by sport / bet type / text, or
