@@ -396,12 +396,46 @@ async def _handle_markets_matched_inner(
         fungible_only=fungible_only,
     )
 
-    # Browse the index — this is a pure in-memory O(n) scan.
-    rows, total_filtered = equivalence.browse(
-        **_browse_kwargs,
-        limit=limit * 10 if _overfetch else limit,
-        offset=0 if _overfetch else offset,
+    # LIVE net_edge radar: source candidates from the DB JOIN of genuinely-live pairs
+    # (both legs active AND unresolved) instead of the static EquivalenceIndex. The index
+    # orders by volume and front-loads the ~140k resolved-but-status='active' sports, so
+    # for a live_only / net_edge request the first page is 100% dead legs and post-
+    # hydration liveness pruning returns 0 — the "live_only=0 / phantom net_edge" bug
+    # (paging happens before liveness is known). Gated to the unfiltered radar; the index
+    # still serves league/date/q/fungible browsing, and any DAO error falls back to it.
+    rows: list[dict[str, Any]] | None = None
+    total_filtered = 0
+    _used_db_live = False
+    _db_live_path = (
+        (live_only or sort_by == "net_edge")
+        and not (league_filter or date_filter or query_substr or fungible_only)
+        and hasattr(dao, "fetch_live_matched_pairs")
     )
+    if _db_live_path:
+        try:
+            _db_rows = await dao.fetch_live_matched_pairs(
+                bet_types=bet_types_filter,
+                limit=min(max(limit * 10, 500), 2000),
+            )
+            rows = [{
+                "kalshi_ref": r.get("kalshi_market_id"),
+                "pm_ref": r.get("polymarket_market_id"),
+                "bet_type": r.get("bet_type"),
+                "confidence": r.get("confidence"),
+                "method": r.get("method"),
+            } for r in _db_rows]
+            total_filtered = len(rows)
+            _used_db_live = True
+        except Exception:
+            rows = None  # any DAO error → fall back to the index path (backward-compat)
+
+    if rows is None:
+        # Browse the index — this is a pure in-memory O(n) scan.
+        rows, total_filtered = equivalence.browse(
+            **_browse_kwargs,
+            limit=limit * 10 if _overfetch else limit,
+            offset=0 if _overfetch else offset,
+        )
 
     # Compute how many rows were excluded by the fungible_only filter.
     fungible_excluded: int = 0
@@ -483,9 +517,9 @@ async def _handle_markets_matched_inner(
             "is_live": is_live,
         })
 
-    # When min_volume or fungible_only filtering was applied we over-fetched;
-    # apply pagination now.
-    if _overfetch:
+    # When min_volume/fungible_only filtering was applied, or we sourced the live
+    # candidate set from the DB (unpaginated), we over-fetched; apply pagination now.
+    if _overfetch or _used_db_live:
         total_filtered = len(pairs)
         pairs = pairs[offset: offset + limit]
 
