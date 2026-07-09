@@ -1511,28 +1511,70 @@ def _lockable_notional(a_book: Any, b_book: Any) -> tuple[float | None, str]:
 _DEPTH_OVERLAY_TIMEOUT_S = 4.0
 
 
-def _live_top_sizes(resp: Any, *, flip: bool = False) -> tuple[float, float] | None:
-    """(bid_size, ask_size) from a live /book response's ``top`` block, or None
-    when the fetch failed / degraded (source:"unavailable") / either size is
-    missing — the caller then leaves the row untouched, never guesses.
-    ``flip=True`` swaps the sides: a side-1-mapped poly leg's row book is the
-    COMPLEMENT of the live book (bid' = 1-ask, sizes swap — see
-    _orient_poly_leg), so the live ask size backs the row book's bid."""
+# A stored quote whose mid has drifted more than this from the live top-of-book mid is
+# STALE — the store snapshot lagged the live CLOB. Repricing off it (the old overlay kept
+# stale prices, swapped only sizes) served a dead edge as live (the Banxico phantom #1).
+_STALE_MID_DELTA = 0.05
+
+
+def _book_mid(book: Any) -> float | None:
+    if not isinstance(book, dict):
+        return None
+    bid, ask = book.get("bid"), book.get("ask")
+    if isinstance(bid, (int, float)) and isinstance(ask, (int, float)):
+        return (float(bid) + float(ask)) / 2.0
+    return None
+
+
+def _live_top_quote(resp: Any, *, flip: bool = False) -> tuple[float, float, float, float] | None:
+    """(bid, ask, bid_size, ask_size) from a live /book ``top`` block in the ROW book's
+    orientation, or None when the fetch failed / a field is missing. Returns the live PRICES
+    as well as sizes so the overlay can detect a stale stored quote and reprice.
+    ``flip=True`` (side-1-mapped poly leg): the row book is the
+    COMPLEMENT of the live book, so bid=1-live_ask, ask=1-live_bid and the sizes swap."""
     if not isinstance(resp, dict) or resp.get("error"):
         return None
     top = resp.get("top")
     if not isinstance(top, dict):
         return None
+    bid, ask = top.get("bid"), top.get("ask")
     bid_size, ask_size = top.get("bid_size"), top.get("ask_size")
-    if not isinstance(bid_size, (int, float)) or not isinstance(ask_size, (int, float)):
+    if not all(isinstance(v, (int, float)) for v in (bid, ask, bid_size, ask_size)):
         return None
     if flip:
+        bid, ask = 1.0 - float(ask), 1.0 - float(bid)
         bid_size, ask_size = ask_size, bid_size
-    return float(bid_size), float(ask_size)
+    return float(bid), float(ask), float(bid_size), float(ask_size)
+
+
+def _apply_live_leg(book: dict[str, Any], q: tuple[float, float, float, float] | None,
+                    venue: Any, bet_type: Any) -> tuple[dict[str, Any], bool]:
+    """Overlay one leg's live top-of-book onto a COPY of its stored book; return
+    (new_book, was_stale).
+
+    - live fetch failed (``q`` None): mark ``book_source="store"`` (unverifiable) — no
+      price/size change, the row keeps its honest null + demoted depth_unverified.
+    - live mid within ``_STALE_MID_DELTA`` of the stored mid: take the live SIZES, keep the
+      stored prices, ``book_source="live"``.
+    - live mid diverged > ``_STALE_MID_DELTA``: the stored quote is STALE — reprice to the
+      live book (bid/ask + sizes), re-net fees, ``book_source="live (repriced; stored quote
+      stale)"``, and flag stale so the caller warns + recomputes the edge."""
+    if q is None:
+        return {**book, "book_source": "store"}, False
+    bid, ask, bid_size, ask_size = q
+    new = {**book, "bid_size": bid_size, "ask_size": ask_size}
+    stored_mid = _book_mid(book)
+    if stored_mid is not None and abs((bid + ask) / 2.0 - stored_mid) > _STALE_MID_DELTA:
+        new["bid"], new["ask"] = round(bid, 4), round(ask, 4)
+        new["book_source"] = "live (repriced; stored quote stale)"
+        _net_book(venue, new, bet_type=bet_type)
+        return new, True
+    new["book_source"] = "live"
+    return new, False
 
 
 async def _overlay_live_depth(page: list[dict[str, Any]], flips: list[bool],
-                              base_url: str) -> int:
+                              base_url: str) -> tuple[int, int]:
     """PAGE-LOCAL live-depth overlay for find_divergences.
 
     The equivalents-route books carry bid/ask but NO sizes, so every row ships
@@ -1560,29 +1602,45 @@ async def _overlay_live_depth(page: list[dict[str, Any]], flips: list[bool],
             asyncio.gather(*tasks, return_exceptions=True),
             timeout=_DEPTH_OVERLAY_TIMEOUT_S)
     except TimeoutError:
-        return 0
-    overlaid = 0
+        return 0, 0
+    overlaid = repriced = 0
     for i, row in enumerate(page):
-        a_sizes = _live_top_sizes(results[2 * i])
-        b_sizes = _live_top_sizes(results[2 * i + 1], flip=flips[i])
-        if a_sizes is None or b_sizes is None:
-            continue  # a leg failed to size — leave the row's honest null intact
         a_leg, b_leg = row.get("a") or {}, row.get("b") or {}
         a_book, b_book = a_leg.get("book"), b_leg.get("book")
         if not isinstance(a_book, dict) or not isinstance(b_book, dict):
             continue
-        a_new = {**a_book, "bid_size": a_sizes[0], "ask_size": a_sizes[1]}
-        b_new = {**b_book, "bid_size": b_sizes[0], "ask_size": b_sizes[1]}
-        notional, _basis = _lockable_notional(a_new, b_new)
-        if notional is None:
-            continue  # direction fields absent — can't verify, keep null
+        a_q = _live_top_quote(results[2 * i])
+        b_q = _live_top_quote(results[2 * i + 1], flip=flips[i])
+        bet_type = row.get("bet_type")
+
+        # Overlay each leg's live book: take live sizes, reprice (+ re-net fees) when the
+        # stored quote is stale, mark book_source. A failed live fetch → book_source="store".
+        a_new, a_stale = _apply_live_leg(a_book, a_q, a_leg.get("venue"), bet_type)
+        b_new, b_stale = _apply_live_leg(b_book, b_q, b_leg.get("venue"), bet_type)
         row["a"] = {**a_leg, "book": a_new}
         row["b"] = {**b_leg, "book": b_new}
-        row["max_lockable_notional"] = notional
-        row["notional_basis"] = _NOTIONAL_BASIS_LIVE_DEPTH
-        row["warnings"] = [w for w in row["warnings"] if w != "depth_unverified"]
-        overlaid += 1
-    return overlaid
+
+        # A stale leg means the pre-overlay net_edge was computed off a lagged store quote
+        # (the phantom): recompute the edge from the live-repriced books and warn stale_quote
+        # so the row is demoted below clean rows on the re-sort (Banxico → real ~edge + warn).
+        if a_stale or b_stale:
+            new_edge = _divergence_edge(a_new, b_new)
+            row["net_edge"] = new_edge
+            row["annualized_net_edge"] = _annualized_edge(new_edge, row.get("lock_days"))
+            if "stale_quote" not in row["warnings"]:
+                row["warnings"] = [*row["warnings"], "stale_quote"]
+            repriced += 1
+
+        # Depth-cap: only when BOTH legs were live-sized (a failed leg keeps the honest null
+        # + its depth_unverified warning — an unverifiable book can't back a sized edge).
+        if a_q is not None and b_q is not None:
+            notional, _basis = _lockable_notional(a_new, b_new)
+            if notional is not None:
+                row["max_lockable_notional"] = notional
+                row["notional_basis"] = _NOTIONAL_BASIS_LIVE_DEPTH
+                row["warnings"] = [w for w in row["warnings"] if w != "depth_unverified"]
+                overlaid += 1
+    return overlaid, repriced
 
 
 async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float = 0.0,
@@ -1809,10 +1867,12 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
     page = out[:limit]
     flips = [bool(row.pop("_poly_flipped", False)) for row in page]
     depth_overlaid = 0
+    stale_repriced = 0
     if include_depth and page:
-        depth_overlaid = await _overlay_live_depth(page, flips, base_url)
-        if depth_overlaid:
-            # a row that became clean floats above warned rows within the page.
+        depth_overlaid, stale_repriced = await _overlay_live_depth(page, flips, base_url)
+        if depth_overlaid or stale_repriced:
+            # a row that became clean floats above warned rows; a repriced row (now stale-
+            # warned, lower real edge) sinks below clean rows — re-sort to reflect both.
             page.sort(key=_rank_key)
     return {
         "divergences": page,
@@ -1825,6 +1885,9 @@ async def find_divergences(*, base_url: str = DEFAULT_BASE, min_net_edge: float 
         # rows on THIS page whose max_lockable_notional was verified from a live
         # top-of-book fetch (see notional_basis; overlay is page-local by design).
         "depth_overlaid": depth_overlaid,
+        # rows on THIS page whose stored quote was stale (live mid diverged > 5c) and were
+        # repriced from the live book + warned stale_quote (the phantom-edge guard).
+        "stale_repriced": stale_repriced,
         "ranked_by": ("clean-first (rows with any `warnings` sort after clean rows), then "
                       "annualized_net_edge (capital-efficiency; falls back to net_edge when "
                       "horizon unknown)"),
