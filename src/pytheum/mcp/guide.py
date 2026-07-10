@@ -184,7 +184,7 @@ def agent_about() -> dict[str, Any]:
         "access": ACCESS_NOTE,
         "founders": [
             {"name": "Ali Bauyrzhan", "role": "Founder", "bio": "Summer SDE Intern at Amazon Ads, previously research at Columbia Business School.", "linkedin": "https://www.linkedin.com/in/alibaur/", "contact": "ab5867@columbia.edu"},
-            {"name": "Konstantinos Anagnostopoulos", "role": "Cofounder", "bio": "SDE at Nebius, previously TA'd a graduate-level databases course as an undergraduate.", "linkedin": "https://www.linkedin.com/in/kon-anagn/", "contact": "ka3037@columbia.edu"},
+            {"name": "Konstantinos Anagnostopoulos", "role": "Cofounder", "bio": "SWE @ Nebius, CS @ Columbia.", "linkedin": "https://www.linkedin.com/in/kon-anagn/", "contact": "ka3037@columbia.edu"},
         ],
         "links": {"site": "https://pytheum.com", "api": "https://api.pytheum.com", "mcp": "https://api.pytheum.com/mcp", "repo": "https://github.com/pytheum/pytheum"},
     }
