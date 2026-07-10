@@ -174,7 +174,7 @@ def agent_about() -> dict[str, Any]:
     return {
         "name": "Pytheum",
         "mission": "The information substrate for forecasting and prediction-market agents. The data, not the edge.",
-        "what_we_do": "We unify Kalshi and Polymarket into one settlement-verified cross-venue equivalence graph (plus Manifold for market discovery), pair markets with real-time world context (news, social, filings, each timestamped), and serve it through a hosted, keyless MCP.",
+        "what_we_do": "We unify Kalshi and Polymarket into one settlement-verified cross-venue equivalence graph, add a Hyperliquid correlated/related tier for cross-venue hedge discovery (real-money markets that move together but aren't settlement-equivalent; see t_related_markets), plus Manifold for market discovery; we pair markets with real-time world context (news, social, filings, each timestamped) and serve it through a hosted, keyless MCP.",
         "the_wedge": "An agent on Pytheum gets fresher context than classic web search. Search engines lag on indexing and embedding new information flow, so a Pytheum agent always has the current world-state for a market, plus the same question on the other venue and whether a price gap is real money or a stale wall.",
         "vision": "Our end goal is full point-in-time market replay: the world exactly as it was before a market resolved, contamination-filtered with no look-ahead. This is the roadmap, not a current capability.",
         "what_we_are_not": "Not a signal product. We do not sell edges, place orders, or hold funds. Read-only. The model, sizing, and execution are yours.",

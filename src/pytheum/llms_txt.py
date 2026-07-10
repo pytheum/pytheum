@@ -56,7 +56,8 @@ _ENDPOINT_ROWS: tuple[tuple[str, str], ...] = (
     ("GET /v1/markets/{ref}/rules",
      "Full resolution rules text for a market and its cross-venue equivalent, side by side."),
     ("GET /v1/markets/{ref}/related",
-     "Correlated (non-equivalent) cross-venue markets with basis notes."),
+     "Correlated (non-equivalent) cross-venue markets with basis notes, incl. the "
+     "opt-in Hyperliquid related tier (real-money correlated legs; daily-snapshot prices)."),
     ("GET /v1/markets/{ref}/history",
      "Point-in-time price and book history with staleness flags and derived moves."),
     ("GET /v1/markets/{ref}/ohlcv",

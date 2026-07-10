@@ -65,9 +65,10 @@ DEFAULT_BASE = os.environ.get("PYTHEUM_API_BASE", "https://api.pytheum.com")
 # lean: orient a cold agent, then point at the onboarding tools for the rest.
 _INSTRUCTIONS = (
     "Pytheum is the information substrate for prediction-market and forecasting "
-    "agents: a settlement-verified cross-venue graph across Kalshi and Polymarket "
-    "(Manifold is discovery-only), with every market paired to fresh real-time "
-    "world context. An "
+    "agents: a settlement-verified cross-venue equivalence graph across Kalshi and "
+    "Polymarket, plus a Hyperliquid correlated/related tier for cross-venue hedge "
+    "discovery (Manifold is discovery-only), with every market paired to fresh "
+    "real-time world context. An "
     "agent here gets fresher context than classic web search. New to this server? "
     "Call t_guide for the full tool playbook and conventions, t_status for live "
     "coverage and freshness, t_quality for data integrity, and t_about for the "
