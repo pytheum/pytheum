@@ -1210,20 +1210,26 @@ async def whale_trades(
     limit: int = 50,
     market_ref: str | None = None,
     *,
+    venue: str = "polymarket",
     base_url: str = DEFAULT_BASE,
 ) -> dict[str, Any]:
-    """Recent large-notional Polymarket trades (notional_usd = size * price >= min_usd).
+    """Recent large-notional whale trades (notional_usd = size * price >= min_usd), BOTH venues.
 
-    Polymarket-only — Kalshi trades are anonymized.
-    Live venue fetch, coalesced + cached 30 s server-side.
-    ``market_ref`` (optional, venue-prefixed 'polymarket:…') filters to one market.
-    ``min_usd``: minimum notional USD threshold. Default 500.
+    ``venue``: 'polymarket' (default) — **wallet-level** whales (each trade carries the on-chain
+    wallet/pseudonym); or 'kalshi' — **anonymous, size-based** whales only (Kalshi is a centralized
+    exchange and exposes no trader/wallet identity, so trades have NO 'wallet' field).
+    ``market_ref`` (optional, venue-prefixed e.g. 'polymarket:…' / 'kalshi:…'): restrict to ONE
+    market (its prefix also fixes ``venue``). Omit it for the GLOBAL whale feed across that venue.
+    ``min_usd``: caller-set whale threshold (default 500) — tune to the market's liquidity.
     ``limit``: max results returned (1–500). Default 50.
-    Returns {trades: [{ts, market, price, size, notional_usd, side, wallet, pseudonym?}],
-    count, min_usd, venue, source}.
-    On any venue error returns source:"unavailable".
+    Live venue fetch, coalesced + cached 30 s server-side. Returns
+    {trades, count, min_usd, venue, source, note}. On any venue error returns source:"unavailable".
     """
-    params: dict[str, Any] = {"min_usd": min_usd, "limit": limit}
+    v = (venue or "polymarket").strip().lower()
+    if v not in ("polymarket", "kalshi"):
+        return {"error": "invalid_venue",
+                "detail": "venue must be 'polymarket' or 'kalshi'.", "venue": venue}
+    params: dict[str, Any] = {"min_usd": min_usd, "limit": limit, "venue": v}
     if market_ref is not None:
         ref_err = _market_ref_error(market_ref)
         if ref_err:
