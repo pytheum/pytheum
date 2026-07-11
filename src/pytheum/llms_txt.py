@@ -117,6 +117,19 @@ def _build() -> str:
         lines.append(f"  {route}")
         lines.append(f"    {desc}")
         lines.append("")
+    lines += [
+        "## Self-hosting",
+        "",
+        "This manifest describes the hosted service at api.pytheum.com. A self-hosted",
+        "`pytheum serve` instance serves the dataset routes (status, about, guide, matched,",
+        "equivalents, rules, related) against export files you provide via",
+        "PYTHEUM_EQUIVALENCE_PATH / PYTHEUM_RELATED_PATH — these work with your own export;",
+        "screen/search degrade gracefully. The remaining routes require the hosted data",
+        "plane (PIT tick tape, firehose index, on-chain tape): cross-venue context/semantic,",
+        "history/ohlcv/book/oi/flow, whale-trades, and trader analytics. See the SDK README",
+        "for self-host setup.",
+        "",
+    ]
     return "\n".join(lines)
 
 
