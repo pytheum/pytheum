@@ -68,20 +68,20 @@ def test_time_to_resolution_years():
 
 # ---- A-S reference quote --------------------------------------------------
 def test_as_quote_skews_against_inventory():
-    long = as_reference_quote(0.5, inventory=+10, T_years=0.1)
-    short = as_reference_quote(0.5, inventory=-10, T_years=0.1)
+    long = as_reference_quote(0.5, inventory=+10, T_years=0.1, gamma=1.0, kappa=20.0)
+    short = as_reference_quote(0.5, inventory=-10, T_years=0.1, gamma=1.0, kappa=20.0)
     assert long["inventory_skew"] < 0 < short["inventory_skew"]            # long -> skew down, short -> up
     assert _approx(long["reservation_price"], 0.5 - 10 * 1.0 * 0.25 * 0.1)  # r = p - q*gamma*p(1-p)*T
 
 
 def test_as_quote_spread_widens_with_time_and_risk():
-    near = as_reference_quote(0.5, 0, T_years=0.01)
-    far = as_reference_quote(0.5, 0, T_years=1.0)
+    near = as_reference_quote(0.5, 0, T_years=0.01, gamma=1.0, kappa=20.0)
+    far = as_reference_quote(0.5, 0, T_years=1.0, gamma=1.0, kappa=20.0)
     assert far["half_spread"] > near["half_spread"]                        # more time-to-resolution -> wider
 
 
 def test_as_quote_clips_to_unit_interval():
-    q = as_reference_quote(0.97, inventory=-1000, T_years=1.0, gamma=5.0)  # huge upward skew
+    q = as_reference_quote(0.97, inventory=-1000, T_years=1.0, gamma=5.0, kappa=20.0)  # huge upward skew
     assert 0.0 <= q["bid"] <= 1.0 and 0.0 <= q["ask"] <= 1.0               # a probability can't leave [0,1]
 
 
@@ -94,6 +94,19 @@ def test_advise_fungible_tight_pair_clean():
     assert out["fungibility"]["fungible"] is True
     assert out["warnings"] == []                                           # tight, fungible, both legs live
     assert out["risk_inputs"]["terminal_variance"] is not None
+    # the gamma/inventory-free A-S kernel = terminal_variance * T
+    ri = out["risk_inputs"]
+    assert _approx(ri["inventory_risk_gradient"],
+                   ri["terminal_variance"] * ri["time_to_resolution_years"])
+
+
+def test_advise_risk_gradient_none_without_resolution():
+    """No resolution timestamp -> no horizon -> the A-S kernel is honestly null, not guessed."""
+    k = Leg("kalshi", bid=0.54, ask=0.56, bid_size=500, ask_size=500)
+    p = Leg("polymarket", bid=0.545, ask=0.555, bid_size=800, ask_size=800)
+    out = advise(k, p, method="structured_key", confidence=1.0)            # resolution_at omitted
+    assert out["risk_inputs"]["time_to_resolution_years"] is None
+    assert out["risk_inputs"]["inventory_risk_gradient"] is None
 
 
 def test_advise_flags_non_fungible_and_wide_basis():

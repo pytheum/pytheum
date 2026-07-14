@@ -30,7 +30,7 @@ async def test_mm_reference_full_record():
     assert body["pair"]["kalshi"]["ref"] == "kalshi:KX-TEST-YES"
     assert body["pair"]["polymarket"]["ref"] == "polymarket:12345"
     assert body["meta"]["pairs_loaded"] == 1
-    assert body["illustrative_quote"] is not None
+    assert mm["risk_inputs"]["inventory_risk_gradient"] is not None
 
 
 @pytest.mark.asyncio

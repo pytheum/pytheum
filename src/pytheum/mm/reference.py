@@ -158,10 +158,12 @@ def time_to_resolution_years(resolution_at: str | datetime | None,
 
 
 def as_reference_quote(p_hat: float, inventory: float, T_years: float, *,
-                       gamma: float = 1.0, kappa: float = 20.0) -> dict[str, float]:
-    """ILLUSTRATIVE Avellaneda-Stoikov / GL-FT quote from Pytheum's inputs — shows HOW a maker
-    plugs the reference into its model (the maker uses its OWN calibrated gamma/kappa + risk
-    limits).
+                       gamma: float, kappa: float) -> dict[str, float]:
+    """Reference implementation of the PM-adapted Avellaneda-Stoikov / GL-FT quote — the maker
+    supplies its OWN calibrated ``gamma``/``kappa``/``inventory``, so this is the formula, not a
+    placeholder. Deliberately NOT invoked by the served ``mm_reference`` endpoint (which returns
+    only objective inputs, never a quote computed from parameters we don't own); retained as the
+    canonical A-S adaptation for a caller/SDK that has its own calibration.
 
     PM-adapted: uses the Bernoulli terminal variance p(1-p) in place of diffusion sigma^2, and T
     is the real resolution horizon. reservation r = p_hat - inventory*gamma*p(1-p)*T (skew
@@ -198,6 +200,12 @@ def advise(kalshi: Leg, pm: Leg, *, resolution_at: str | datetime | None = None,
     p_hat, basis = reference_fair_value(kalshi, pm)
     fung = fungibility(method, confidence, settlement_divergence)
     T = time_to_resolution_years(resolution_at, now)
+    var = terminal_variance(p_hat)
+    # The gamma- and inventory-free kernel of the PM-adapted Avellaneda-Stoikov maker:
+    # reservation skew = -inventory * gamma * gradient; spread risk term = gamma * gradient.
+    # This is the piece Pytheum owns from data (settlement-verified fair value -> p(1-p),
+    # real resolution date -> T); the maker multiplies by its own gamma/inventory/kappa.
+    gradient = round(var * T, 8) if (var is not None and T is not None) else None
     warnings: list[str] = []
     if not fung.fungible:
         warnings.append("not_fungible: " + fung.reason)
@@ -213,8 +221,9 @@ def advise(kalshi: Leg, pm: Leg, *, resolution_at: str | datetime | None = None,
         "fungibility": {"fungible": fung.fungible, "confidence": fung.confidence,
                         "method": fung.method, "reason": fung.reason},
         "risk_inputs": {
-            "terminal_variance": terminal_variance(p_hat),
+            "terminal_variance": var,
             "time_to_resolution_years": T,
+            "inventory_risk_gradient": gradient,
         },
         "legs": {"kalshi": kalshi.mid(), "polymarket": pm.mid()},
         "warnings": warnings,

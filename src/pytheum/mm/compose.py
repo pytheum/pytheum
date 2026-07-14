@@ -11,12 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pytheum.mm.reference import Leg, advise, as_reference_quote
-
-# gamma/kappa for the ILLUSTRATIVE flat-inventory A-S quote only. The maker supplies its
-# OWN calibrated values + risk limits; these merely demonstrate how the inputs feed A-S.
-_ILLUSTRATIVE_GAMMA = 1.0
-_ILLUSTRATIVE_KAPPA = 20.0
+from pytheum.mm.reference import Leg, advise
 
 
 def _leg_from_book(venue: str, oriented_mid: Any, book: Any, *, allow_book_mid: bool) -> Leg:
@@ -107,26 +102,9 @@ def assemble_mm_reference(market_ref: str, equ: dict[str, Any],
     if same_day is False:
         ref["warnings"].append("deadline_mismatch: the two legs resolve on different days")
 
-    # Illustrative A-S quote (flat inventory) — ONLY when the pair is fungible and both
-    # p_hat + T are known. Heavily labelled: demonstrates how the risk inputs feed an
-    # Avellaneda-Stoikov maker; the maker calibrates its own gamma/kappa + limits.
-    p_hat = ref.get("p_hat")
-    T = ref["risk_inputs"].get("time_to_resolution_years")
-    illustrative: dict[str, Any] | None = None
-    if ref["fungibility"]["fungible"] and isinstance(p_hat, (int, float)) \
-            and isinstance(T, (int, float)):
-        illustrative = {
-            **as_reference_quote(p_hat, inventory=0.0, T_years=T,
-                                 gamma=_ILLUSTRATIVE_GAMMA, kappa=_ILLUSTRATIVE_KAPPA),
-            "note": ("ILLUSTRATIVE flat-inventory A-S quote around p_hat with "
-                     f"placeholder gamma={_ILLUSTRATIVE_GAMMA}/kappa={_ILLUSTRATIVE_KAPPA}"
-                     " — calibrate to your own risk limits; skew grows with live inventory."),
-        }
-
     e_meta = equ.get("meta") or {}
     return {
         "mm_reference": ref,
-        "illustrative_quote": illustrative,
         "pair": {
             "kalshi": {"ref": k_ref, "implied_yes": k_leg.mid()},
             "polymarket": {"ref": pm_ref, "implied_yes": pm_leg.mid()},

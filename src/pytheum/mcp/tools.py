@@ -1107,9 +1107,10 @@ async def mm_reference(
     analytics: the reference fair value ``p_hat`` (depth/tightness-weighted blend), the
     ``basis``, a ``fungibility`` verdict (safe to treat as ONE instrument / a hedge —
     deterministic-by-construction, else a confidence floor, vetoed by any detected
-    settlement divergence), the Avellaneda-Stoikov risk inputs (Bernoulli terminal
-    variance + time-to-resolution), and an illustrative flat-inventory A-S quote.
-    ``market_ref`` must be venue-prefixed — 'kalshi:...' or 'polymarket:...'.
+    settlement divergence), and the Avellaneda-Stoikov risk inputs (Bernoulli terminal
+    variance, time-to-resolution, and their product — the gamma/inventory-free A-S risk
+    kernel the maker scales by its OWN calibration). Objective inputs only, never a quote
+    computed from parameters we don't own. ``market_ref`` must be venue-prefixed.
     """
     market_ref = _normalize_market_ref(market_ref)
     ref_err = _market_ref_error(market_ref)

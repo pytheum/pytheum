@@ -60,9 +60,8 @@ def test_oriented_fungible_pair_full_record():
     assert mm["fungibility"]["fungible"] is True
     assert mm["warnings"] == []
     assert mm["risk_inputs"]["terminal_variance"] is not None
+    assert mm["risk_inputs"]["inventory_risk_gradient"] is not None   # the A-S kernel populates
     assert out["pair"]["orientation"] == "known"
-    assert out["illustrative_quote"] is not None            # fungible + p_hat + T -> illustrative present
-    assert 0.0 <= out["illustrative_quote"]["bid"] <= out["illustrative_quote"]["ask"] <= 1.0
 
 
 def test_unoriented_pair_drops_pm_leg():
@@ -86,7 +85,6 @@ def test_divergent_rules_veto_fungibility():
         k_rules="Resolves YES if CPI is above 3.0% per BLS.",
         pm_rules="Resolves YES if CPI exceeds 3.25%."))
     assert out["mm_reference"]["fungibility"]["fungible"] is False   # rules veto a confident match
-    assert out["illustrative_quote"] is None                        # not fungible -> no illustrative quote
     assert any("settlement_divergence" in w for w in out["mm_reference"]["warnings"])
 
 
