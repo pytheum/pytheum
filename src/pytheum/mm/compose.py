@@ -117,7 +117,5 @@ def assemble_mm_reference(market_ref: str, equ: dict[str, Any],
             "dataset_version": e_meta.get("dataset_version"),
             "matched_via": e_meta.get("matched_via"),
             "same_deadline_day": same_day,
-            "note": ("Reference fair value + fungibility + A-S risk inputs for a market maker. "
-                     "The data layer, not the edge: quoting/sizing/execution are yours."),
         },
     }
