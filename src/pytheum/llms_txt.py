@@ -55,6 +55,10 @@ _ENDPOINT_ROWS: tuple[tuple[str, str], ...] = (
      "Settlement-verified counterpart market on the other venue with live spread."),
     ("GET /v1/markets/{ref}/rules",
      "Full resolution rules text for a market and its cross-venue equivalent, side by side."),
+    ("GET /v1/markets/{ref}/mm_reference",
+     "Market-maker reference: consolidated cross-venue fair value (p_hat), a fungibility "
+     "verdict (safe-to-hedge, with a settlement-divergence veto), and Avellaneda-Stoikov "
+     "risk inputs. The data layer, not the edge."),
     ("GET /v1/markets/{ref}/related",
      "Correlated (non-equivalent) cross-venue markets with basis notes, incl. the "
      "opt-in Hyperliquid related tier (real-money correlated legs; daily-snapshot prices)."),
