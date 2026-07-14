@@ -26,6 +26,7 @@ from pytheum.api.markets_equivalents import handle_market_equivalents, handle_ma
 from pytheum.api.markets_get import handle_market_get
 from pytheum.api.markets_holders import handle_market_holders
 from pytheum.api.markets_matched import handle_markets_matched
+from pytheum.api.markets_mm import handle_market_mm_reference
 from pytheum.api.markets_ohlcv import handle_market_ohlcv
 from pytheum.api.markets_oi import handle_market_oi
 from pytheum.api.markets_related import handle_market_related
@@ -82,6 +83,9 @@ def register_group_A(
 
     async def _market_rules(ref: str, query: dict[str, str]) -> tuple[int, dict[str, Any]]:
         return await handle_market_rules(ref, query, dao=dao, equivalence=equivalence)
+
+    async def _market_mm_reference(ref: str, query: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        return await handle_market_mm_reference(ref, query, dao=dao, equivalence=equivalence)
 
     async def _market_get(ref: str, query: dict[str, str]) -> tuple[int, dict[str, Any]]:
         return await handle_market_get(ref, query, dao=dao, equivalence=equivalence)
@@ -163,6 +167,15 @@ def register_group_A(
     registry.add(RouteSpec(
         "GET", "/v1/markets/{ref}/rules", _market_rules,
         summary="Full resolution rules for a market and its cross-venue equivalent.",
+        tags=["equivalence"],
+    ))
+    registry.add(RouteSpec(
+        "GET", "/v1/markets/{ref}/mm_reference", _market_mm_reference,
+        summary=(
+            "Market-maker reference: consolidated cross-venue fair value (p_hat), a "
+            "fungibility verdict (safe-to-hedge, with a settlement-divergence veto), and "
+            "Avellaneda-Stoikov risk inputs. Same payload as the t_mm_reference MCP tool."
+        ),
         tags=["equivalence"],
     ))
     registry.add(RouteSpec(

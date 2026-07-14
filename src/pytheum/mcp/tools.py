@@ -1095,6 +1095,30 @@ async def equivalent_markets(
     return resp
 
 
+async def mm_reference(
+    market_ref: str,
+    *,
+    base_url: str = DEFAULT_BASE,
+) -> dict[str, Any]:
+    """Market-maker cross-venue reference: fair value + fungibility + A-S risk inputs.
+
+    Thin client for GET /v1/markets/{ref}/mm_reference. The server composes the verified
+    pair's two legs (oriented prices + book) with their settlement rules and runs the MM
+    analytics: the reference fair value ``p_hat`` (depth/tightness-weighted blend), the
+    ``basis``, a ``fungibility`` verdict (safe to treat as ONE instrument / a hedge —
+    deterministic-by-construction, else a confidence floor, vetoed by any detected
+    settlement divergence), the Avellaneda-Stoikov risk inputs (Bernoulli terminal
+    variance + time-to-resolution), and an illustrative flat-inventory A-S quote.
+    ``market_ref`` must be venue-prefixed — 'kalshi:...' or 'polymarket:...'.
+    """
+    market_ref = _normalize_market_ref(market_ref)
+    ref_err = _market_ref_error(market_ref)
+    if ref_err:
+        return ref_err
+    path = f"/v1/markets/{quote(market_ref, safe='')}/mm_reference"
+    return await _get_market(path, {}, base_url, ref=market_ref)
+
+
 async def orderbook(
     market_ref: str,
     depth: int = 20,

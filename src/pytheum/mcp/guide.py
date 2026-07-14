@@ -63,6 +63,7 @@ _TOOL_GROUPS: list[dict[str, Any]] = [
             {"name": "t_equivalent_markets", "use": "The SAME market on the other venue for one known ref + the spread."},
             {"name": "t_matched_pairs", "use": "Browse the verified matched pairs; sort_by='net_edge' = honest arb radar."},
             {"name": "t_find_divergences", "use": "Cross-venue divergence scanner: gold pairs joined to live books, ranked by annualized net-of-fees edge."},
+            {"name": "t_mm_reference", "use": "Market-maker reference for a pair: consolidated fair value (p_hat) + fungibility verdict + Avellaneda-Stoikov risk inputs. The data layer, not the edge."},
             {"name": "t_related_markets", "use": "Correlated-but-NOT-equivalent markets (hedge discovery, not arbitrage)."},
         ],
     },
@@ -118,6 +119,14 @@ _WORKFLOWS = [
     {
         "goal": "Is this Kalshi market also on Polymarket?",
         "steps": ["t_equivalent_markets('kalshi:<TICKER>') — returns the twin + cross-venue spread"],
+    },
+    {
+        "goal": "Market-maker: get a cross-venue reference fair value + is the pair a safe hedge?",
+        "steps": [
+            "t_mm_reference(ref) — p_hat (consolidated fair value), fungibility verdict, and the A-S risk inputs (terminal variance + T) in one call",
+            "read fungibility.fungible + warnings BEFORE treating one leg as a hedge for the other (a settlement-rule divergence vetoes even a confident match)",
+            "plug p_hat + risk_inputs into your OWN calibrated quoting model — Pytheum is the data layer, not the edge",
+        ],
     },
     {
         "goal": "Research one market end to end",
@@ -179,7 +188,7 @@ def agent_about() -> dict[str, Any]:
         "vision": "Our end goal is full point-in-time market replay: the world exactly as it was before a market resolved, contamination-filtered with no look-ahead. This is the roadmap, not a current capability.",
         "what_we_are_not": "Not a signal product. We do not sell edges, place orders, or hold funds. Read-only. The model, sizing, and execution are yours.",
         "data": "Live coverage and freshness via t_status. Graph integrity via t_quality.",
-        "tools": "27 t_* tools for discovery, real-time context, cross-venue divergences net of fees, prices and history. Call t_guide to start.",
+        "tools": "28 t_* tools for discovery, real-time context, cross-venue divergences net of fees, a market-maker reference layer, prices and history. Call t_guide to start.",
         "pricing": "Free to use.",
         "access": ACCESS_NOTE,
         "founders": [
